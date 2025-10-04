@@ -1,6 +1,7 @@
+import pickle
+
 import soccerdata as sd
 from tqdm import tqdm
-import pickle
 
 
 def scrap_data(season: int):
@@ -8,12 +9,12 @@ def scrap_data(season: int):
 
     epl_schedule = ws.read_schedule()
 
-    matches = epl_schedule.to_dict(orient='records')
+    matches = epl_schedule.to_dict(orient="records")
 
     for match in tqdm(matches):
-        game_id = match['game_id']
+        game_id = match["game_id"]
         events = ws.read_events(match_id=game_id)
-        match['events'] = events
+        match["events"] = events
 
     filename = f"data/epl_{season}.pkl"
     with open(filename, "wb") as f:

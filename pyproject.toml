@@ -1,0 +1,16 @@
+[project]
+name = "tudelft-graph-ml-football-predictions"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "soccerdata>=1.8.7",
+    "tqdm>=4.67.1",
+]
+
+[dependency-groups]
+dev = [
+    "black[jupyter]>=25.9.0",
+    "isort>=6.1.0",
+]
