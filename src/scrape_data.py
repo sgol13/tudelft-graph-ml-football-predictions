@@ -4,7 +4,7 @@ import soccerdata as sd
 from tqdm import tqdm
 
 
-def scrap_data(season: int):
+def scrape_data(season: int):
     ws = sd.WhoScored(leagues="ENG-Premier League", seasons=season)
 
     epl_schedule = ws.read_schedule()
@@ -23,7 +23,7 @@ def scrap_data(season: int):
 
 def main():
     for year in range(2015, 2024):
-        scrap_data(year)
+        scrape_data(year)
 
 
 if __name__ == "__main__":
