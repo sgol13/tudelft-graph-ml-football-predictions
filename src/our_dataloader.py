@@ -31,9 +31,7 @@ def count_passes(
                 continue
             if pass_from is not None and pass_from in player_to_idx:
                 passes.append((player_to_idx[pass_from], player_to_idx[player]))
-            pass_from = player
-        else:
-            pass_from = None
+        pass_from = player
 
     pass_counts = Counter(passes)
     return pass_counts, team_players
@@ -59,7 +57,7 @@ def build_graph(
     data = Data(x=x, edge_index=edge_index, edge_weight=edge_weight)
     data.team = team
     data.time_range = time_range
-    data.players = team_players
+    data.players = team_players  # This is a numpy array, and I think it should be a Torch Tensor or a List (for compatibility)
 
     return data
 
@@ -101,7 +99,7 @@ def build_team_graphs(
                 pass_counts = Counter(
                     {
                         (player_to_idx[i], player_to_idx[j]): count
-                        for (i, j), count in pass_counts.items()
+                        for _, ((i, j), count) in cumulative_pass_counts.items()
                         if i in player_to_idx and j in player_to_idx
                     }
                 )
@@ -111,7 +109,7 @@ def build_team_graphs(
                 pass_counts, team_players, team, (start_minute, end_minute)
             )
             if data is not None:
-                graphs[team] += data
+                graphs[team].append(data)
 
     return graphs
 
@@ -177,8 +175,10 @@ class SoccerDataset(Dataset):
         return len(list(Path(self.processed_dir).glob("data_*.pt")))
 
     def get(self, idx):
-        path = sorted(Path(self.processed_dir).glob("data_*.pt"))[idx]
-        return torch.load(path)
+        path = sorted(Path(self.processed_dir).glob("data_*.pt"))[
+            idx
+        ]  # This sorted() here?
+        return torch.load(path, weights_only=False)
 
 
 class SequentialSoccerDataset(SoccerDataset):
@@ -199,7 +199,7 @@ class SequentialSoccerDataset(SoccerDataset):
             starting_year=starting_year,
             ending_year=ending_year,
         )
-        print(self)
+        # print(self)
 
     def _process_match(self, events: DataFrame) -> dict[str, list[Data]]:
         graphs = build_team_graphs(
@@ -232,3 +232,9 @@ class CumulativeSoccerDataset(SoccerDataset):
             events, time_interval=self.time_interval, cumulative=True
         )
         return graphs
+
+
+cum_dataset = SequentialSoccerDataset(root="data", ending_year=2016, time_interval=30)
+print(len(cum_dataset))
+for i in range(100):
+    print(cum_dataset[i].time_range, cum_dataset[i].team)
