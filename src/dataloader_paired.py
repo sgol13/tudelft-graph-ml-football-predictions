@@ -33,10 +33,60 @@ def count_passes(team_events: pd.DataFrame) -> tuple[Counter[tuple[int, int]], n
     pass_counts = Counter(passes)
     return pass_counts, team_players
 
+def count_goals(events: pd.DataFrame, end_minute: int, home_team: str, away_team: str) -> tuple[int, int]:
+    """Count goals for home and away teams up to specified minute."""
+    if events.empty or 'is_goal' not in events.columns:
+        return 0, 0
+    
+    # Filter events up to the current interval end minute
+    events_up_to_minute = events[events["minute"] <= end_minute]
+    
+    # Count home team goals
+    home_goals = events_up_to_minute[
+        (events_up_to_minute["team"] == home_team) & 
+        (events_up_to_minute["is_goal"] == True)
+    ].shape[0]
+    
+    # Count away team goals  
+    away_goals = events_up_to_minute[
+        (events_up_to_minute["team"] == away_team) & 
+        (events_up_to_minute["is_goal"] == True)
+    ].shape[0]
+    
+    return home_goals, away_goals
 
-def build_graph(pass_counts: Counter, team_players: list[str]) -> Data:
+
+def get_final_result(events: pd.DataFrame, home_team: str, away_team: str) -> tuple[int, int, torch.Tensor]:
+    """Get final match result and encode as one-hot tensor [Home Win, Draw, Away Win]."""
+    if events.empty or 'is_goal' not in events.columns:
+        return 0, 0, torch.tensor([0, 0, 0], dtype=torch.float)
+    
+    home_goals = events[
+        (events["team"] == home_team) & 
+        (events["is_goal"] == True)
+    ].shape[0]
+    
+    away_goals = events[
+        (events["team"] == away_team) & 
+        (events["is_goal"] == True)
+    ].shape[0]
+    
+    # Create one-hot encoding for CrossEntropyLoss
+    if home_goals > away_goals:
+        result_tensor = torch.tensor([1, 0, 0], dtype=torch.float)  # Home Win
+    elif home_goals == away_goals:
+        result_tensor = torch.tensor([0, 1, 0], dtype=torch.float)  # Draw
+    else:
+        result_tensor = torch.tensor([0, 0, 1], dtype=torch.float)  # Away Win
+    
+    return home_goals, away_goals, result_tensor
+
+
+
+
+def build_graph(pass_counts: Counter, team_players: list[str]) -> Data:  # DISCLAIMER, IF WE EVER WANT TO ADD TEAM INFO, THIS SHOULD HAVE THE NAME OF THE TEAM and others
     """Build graph - handles empty pass cases gracefully."""
-    if not pass_counts:
+    if not pass_counts or len(team_players) == 0:
         # Return empty graph instead of crashing
         x = torch.zeros((max(1, len(team_players)), 1), dtype=torch.float)
         edge_index = torch.zeros((2, 0), dtype=torch.long)
@@ -49,48 +99,57 @@ def build_graph(pass_counts: Counter, team_players: list[str]) -> Data:
     return Data(x=x, edge_index=edge_index, edge_weight=edge_weight)
 
 
-def build_paired_graphs(
-    events: pd.DataFrame, 
-    home_team: str,
-    away_team: str,
-    time_interval: int = 5, 
-    cumulative: bool = False
+
+def build_team_graphs_with_goals(
+    events, home_team: str, away_team: str, time_interval=5, cumulative=False
 ) -> List[Data]:
-    """Build PAIRED graphs for home and away teams for each time interval."""
-    # Check if required data exists
+    """Build PAIRED graphs with both home and away teams for each time interval."""
     if events.empty or 'minute' not in events.columns:
         return []
     
     max_minute = events["minute"].max()
     
-    paired_graphs = []
+    # Get final result with one-hot encoding
+    final_home_goals, final_away_goals, final_result_onehot = get_final_result(events, home_team, away_team)
+
+    paired_graphs = []  # Now we return List[Data] instead of dict[str, list[Data]]
     cumulative_pass_counts = defaultdict(Counter)
     cumulative_team_players = defaultdict(set)
 
+    # Iterate over time intervals
     for start_minute in range(0, max_minute, time_interval):
         end_minute = min(start_minute + time_interval, max_minute + 1)
         events_in_interval = events[
-            (events["minute"] >= start_minute) &
-            (events["minute"] < end_minute) &
-            (~events["type"].isin(["Start", "End", "FormationSet"]))
+            (events["minute"] >= start_minute)
+            & (events["minute"] < end_minute)
+            & (~events["type"].isin(["Start", "End", "FormationSet"]))
         ]
 
+        # Count goals up to current interval
+        current_home_goals, current_away_goals = count_goals(events, end_minute, home_team, away_team)
+
+        home_graph = None
+        away_graph = None
+        
         # Process HOME team
         home_events = events_in_interval[events_in_interval["team"] == home_team]
         home_pass_counts, home_players = count_passes(home_events)
 
         if cumulative and home_pass_counts:
             for (i, j), count in home_pass_counts.items():
-                p_from, p_to = home_players[i], home_players[j]
+                p_from = home_players[i]
+                p_to = home_players[j]
                 cumulative_pass_counts[home_team][(p_from, p_to)] += count
             cumulative_team_players[home_team].update(home_players)
-            home_players = sorted(cumulative_team_players[home_team])
+            home_players = sorted(list(cumulative_team_players[home_team]))
             player_to_idx = {p: i for i, p in enumerate(home_players)}
-            home_pass_counts = Counter({
-                (player_to_idx[i], player_to_idx[j]): count
-                for (i, j), count in cumulative_pass_counts[home_team].items()
-                if i in player_to_idx and j in player_to_idx
-            })
+            home_pass_counts = Counter(
+                {
+                    (player_to_idx[i], player_to_idx[j]): count
+                    for (i, j), count in cumulative_pass_counts[home_team].items()
+                    if i in player_to_idx and j in player_to_idx
+                }
+            )
 
         home_graph = build_graph(home_pass_counts, home_players)
 
@@ -100,16 +159,19 @@ def build_paired_graphs(
 
         if cumulative and away_pass_counts:
             for (i, j), count in away_pass_counts.items():
-                p_from, p_to = away_players[i], away_players[j]
+                p_from = away_players[i]
+                p_to = away_players[j]
                 cumulative_pass_counts[away_team][(p_from, p_to)] += count
             cumulative_team_players[away_team].update(away_players)
-            away_players = sorted(cumulative_team_players[away_team])
+            away_players = sorted(list(cumulative_team_players[away_team]))
             player_to_idx = {p: i for i, p in enumerate(away_players)}
-            away_pass_counts = Counter({
-                (player_to_idx[i], player_to_idx[j]): count
-                for (i, j), count in cumulative_pass_counts[away_team].items()
-                if i in player_to_idx and j in player_to_idx
-            })
+            away_pass_counts = Counter(
+                {
+                    (player_to_idx[i], player_to_idx[j]): count
+                    for (i, j), count in cumulative_pass_counts[away_team].items()
+                    if i in player_to_idx and j in player_to_idx
+                }
+            )
 
         away_graph = build_graph(away_pass_counts, away_players)
 
@@ -119,19 +181,28 @@ def build_paired_graphs(
             home_x=home_graph.x,
             home_edge_index=home_graph.edge_index,
             home_edge_weight=home_graph.edge_weight,
+            home_players=home_players,
             
             # Away team graph data
             away_x=away_graph.x,
             away_edge_index=away_graph.edge_index,
             away_edge_weight=away_graph.edge_weight,
+            away_players=away_players,
             
             # Time information
             start_minute=torch.tensor(start_minute, dtype=torch.long),
             end_minute=torch.tensor(end_minute, dtype=torch.long),
             
-            # Store player lists as attributes (not tensors)
-            home_players=home_players,
-            away_players=away_players,
+            # Goal information
+            current_home_goals=current_home_goals,
+            current_away_goals=current_away_goals,
+            final_home_goals=final_home_goals,
+            final_away_goals=final_away_goals,
+            final_result=final_result_onehot,
+            
+            # Team names
+            home_team=home_team,
+            away_team=away_team,
         )
         
         paired_graphs.append(paired_data)
@@ -184,19 +255,14 @@ class SoccerDataset(Dataset):
                 away_team = match["away_team"]
                 match_id = match.get("game_id", f"{season_name}_{idx}")
                 
-                # Get PAIRED graphs for this match
+                # Get PAIRED graphs for this match - now returns List[Data]
                 paired_graphs = self._process_match(events, home_team, away_team, season_name)
                 
                 for paired_data in paired_graphs:
                     # Store rich context information
                     paired_data.season = season_name
                     paired_data.match_id = match_id
-                    paired_data.home_team_name = home_team
-                    paired_data.away_team_name = away_team
                     paired_data.data_id = idx
-                    
-                    # You can also add match outcomes if available
-                    # paired_data.result = match.get("result", None)  # "H", "D", "A"
                     
                     if self.pre_filter is not None and not self.pre_filter(paired_data):
                         continue
@@ -234,20 +300,20 @@ class SoccerDataset(Dataset):
 
 class SequentialSoccerDataset(SoccerDataset):
     def _process_match(self, events: pd.DataFrame, home_team: str, away_team: str, season: str) -> List[Data]:
-        return build_paired_graphs(
+        return build_team_graphs_with_goals(
             events, home_team, away_team, self.time_interval, cumulative=False
         )
 
 
 class CumulativeSoccerDataset(SoccerDataset):
     def _process_match(self, events: pd.DataFrame, home_team: str, away_team: str, season: str) -> List[Data]:
-        return build_paired_graphs(
+        return build_team_graphs_with_goals(
             events, home_team, away_team, self.time_interval, cumulative=True
         )
 
 
 # Test the improved version
-dataset = CumulativeSoccerDataset(root="../data", starting_year=2015, ending_year=2016, time_interval=30)
+dataset = SequentialSoccerDataset(root="../data", starting_year=2015, ending_year=2024, time_interval=30)
 print(f"Dataset length: {len(dataset)}")
 
 # Check the improved data structure
@@ -255,8 +321,11 @@ if len(dataset) > 0:
     for i in range(min(5, len(dataset))):
         data = dataset[i]
         print(f"\nData point {i}:")
-        print(f"Match: {data.home_team_name} vs {data.away_team_name}")
+        print(f"Match: {data.home_team} vs {data.away_team}")
         print(f"Season: {data.season}, Time: {data.start_minute}-{data.end_minute}")
         print(f"Home graph: {data.home_x.shape[0]} players, {data.home_edge_index.shape[1]} passes")
         print(f"Away graph: {data.away_x.shape[0]} players, {data.away_edge_index.shape[1]} passes")
+        print(f"Current goals: {data.current_home_goals}-{data.current_away_goals}")
+        print(f"Final goals: {data.final_home_goals}-{data.final_away_goals}")
+        print(f"Final result: {data.final_result}")
         print(f"All attributes: {list(data.keys())}")
