@@ -182,7 +182,3 @@ class DisjointModel(torch.nn.Module):
         x = self.classifier(x)
 
         return x
-
-
-model = DisjointModel()
-print(model)
