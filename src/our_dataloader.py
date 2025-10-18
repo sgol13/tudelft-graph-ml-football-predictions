@@ -57,7 +57,7 @@ def build_graph(
     data = Data(x=x, edge_index=edge_index, edge_weight=edge_weight)
     data.team = team
     data.time_range = time_range
-    data.players = team_players # This is a numpy array, and I think it should be a Torch Tensor or a List (for compatibility)
+    data.players = team_players  # This is a numpy array, and I think it should be a Torch Tensor or a List (for compatibility)
 
     return data
 
@@ -175,7 +175,9 @@ class SoccerDataset(Dataset):
         return len(list(Path(self.processed_dir).glob("data_*.pt")))
 
     def get(self, idx):
-        path = sorted(Path(self.processed_dir).glob("data_*.pt"))[idx] # This sorted() here?
+        path = sorted(Path(self.processed_dir).glob("data_*.pt"))[
+            idx
+        ]  # This sorted() here?
         return torch.load(path, weights_only=False)
 
 
@@ -230,6 +232,7 @@ class CumulativeSoccerDataset(SoccerDataset):
             events, time_interval=self.time_interval, cumulative=True
         )
         return graphs
+
 
 cum_dataset = SequentialSoccerDataset(root="data", ending_year=2016, time_interval=30)
 print(len(cum_dataset))
