@@ -17,8 +17,25 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device):
         batch = batch.to(device)
         optimizer.zero_grad()
 
-        # Forward pass (adjust depending on your GAT forward signature)
-        out = model(batch.x, batch.edge_index, batch.batch)
+        # lay out data for model
+        # TODO fix these lines to actually correspond to the data
+        x1 = batch.x1
+        x2 = batch.x2
+        edge_index1 = batch.edge_index1
+        edge_index2 = batch.edge_index2
+        my_batch = batch.batch
+        x_norm2_1 = batch.x_norm2_1
+        x_norm2_2 = batch.x_norm2_2
+
+        out = model(
+            x1=x1,
+            x2=x2,
+            edge_index1=edge_index1,
+            edge_index2=edge_index2,
+            batch=my_batch,
+            x_norm2_1=x_norm2_1,
+            x_norm2_2=x_norm2_2,
+        )
         loss = criterion(out, batch.y)
         loss.backward()
         optimizer.step()
@@ -39,7 +56,25 @@ def evaluate(model, dataloader, criterion, device):
     progress = tqdm(dataloader, desc="Evaluating", leave=False)
     for batch in progress:
         batch = batch.to(device)
-        out = model(batch.x, batch.edge_index, batch.batch)
+
+        # lay out data for model
+        # TODO fix these lines to actually correspond to the data
+        x1 = batch.x1
+        x2 = batch.x2
+        edge_index1 = batch.edge_index1
+        edge_index2 = batch.edge_index2
+        my_batch = batch.batch
+        x_norm2_1 = batch.x_norm2_1
+        x_norm2_2 = batch.x_norm2_2
+        out = model(
+            x1=x1,
+            x2=x2,
+            edge_index1=edge_index1,
+            edge_index2=edge_index2,
+            batch=my_batch,
+            x_norm2_1=x_norm2_1,
+            x_norm2_2=x_norm2_2,
+        )
         loss = criterion(out, batch.y)
         total_loss += loss.item()
 
@@ -70,7 +105,8 @@ def main():
     test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, num_workers=1)
 
     # Model setup
-    model = GAT().to(device)
+    input_size = 7  # TODO What does the input size correspond to?
+    model = GAT(input_size=input_size).to(device)
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
