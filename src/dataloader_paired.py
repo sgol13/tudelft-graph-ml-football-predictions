@@ -235,7 +235,7 @@ class SoccerDataset(Dataset):
         return [p.name for p in processed]
 
     def _process_match(
-        self, events: pd.DataFrame, home_team: str, away_team: str, season: str
+        self, events: pd.DataFrame, home_team: str, away_team: str
     ) -> List[Data]:
         raise NotImplementedError()
 
@@ -256,10 +256,8 @@ class SoccerDataset(Dataset):
                 away_team = match["away_team"]
                 match_id = match.get("game_id", f"{season_name}_{idx}")
 
-                # Get PAIRED graphs for this match - now returns List[Data]
-                paired_graphs = self._process_match(
-                    events, home_team, away_team, season_name
-                )
+                # Get paired graphs for this match
+                paired_graphs = self._process_match(events, home_team, away_team)
 
                 for paired_data in paired_graphs:
                     # Store rich context information
@@ -307,25 +305,33 @@ class SoccerDataset(Dataset):
 
 class SequentialSoccerDataset(SoccerDataset):
     def _process_match(
-        self, events: pd.DataFrame, home_team: str, away_team: str, season: str
+        self, events: pd.DataFrame, home_team: str, away_team: str
     ) -> List[Data]:
         return build_team_graphs_with_goals(
             events, home_team, away_team, self.time_interval, cumulative=False
         )
 
+    @property
+    def processed_dir(self) -> str:
+        return Path(self.root).joinpath("processed_sequential").as_posix()
+
 
 class CumulativeSoccerDataset(SoccerDataset):
     def _process_match(
-        self, events: pd.DataFrame, home_team: str, away_team: str, season: str
+        self, events: pd.DataFrame, home_team: str, away_team: str
     ) -> List[Data]:
         return build_team_graphs_with_goals(
             events, home_team, away_team, self.time_interval, cumulative=True
         )
 
+    @property
+    def processed_dir(self) -> str:
+        return Path(self.root).joinpath("processed_cumulative").as_posix()
+
 
 def main():
     # Test the improved version
-    dataset = SequentialSoccerDataset(
+    dataset = CumulativeSoccerDataset(
         root="../data", starting_year=2015, ending_year=2024, time_interval=30
     )
     print(f"Dataset length: {len(dataset)}")
