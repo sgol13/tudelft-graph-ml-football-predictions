@@ -3,10 +3,14 @@ import torch.nn.functional as F
 import numpy as np
 from torch_geometric.nn.conv import GATConv
 from torch_geometric.nn import global_mean_pool
-from torch.nn import Linear, Softmax, ELU, RNN
+from torch.nn import Linear, Softmax, ELU, RNN, CrossEntropyLoss
+from torch.optim import Adam
+from tqdm import tqdm
+
+from dataloader_paired import CumulativeSoccerDataset, SequentialSoccerDataset
 
 class Classifier(torch.nn.Module):
-    def __init__(self, input_size = 64*2, hidden_size = 16, num_classes = 3):
+    def __init__(self, input_size = 64, hidden_size = 16, num_classes = 3):
         super().__init__()
         self.lin1 = Linear(input_size, hidden_size)
         self.lin2 = Linear(hidden_size, num_classes)
@@ -53,8 +57,10 @@ class GAT(torch.nn.Module):
         x1 = global_mean_pool(x1, batch) # This can be changed (Experiment?)
         x2 = global_mean_pool(x2, batch) # This can be changed (Experiment?)
 
-        x1 = torch.cat((x1, x_norm2_1), dim = 1) # I assume x_norm2 are the global match features (?)
-        x2 = torch.cat((x2, x_norm2_2), dim = 1)
+        if x_norm2_1 is not None:
+            x1 = torch.cat((x1, x_norm2_1), dim = 1) # I assume x_norm2 are the global match features (?)
+        if x_norm2_2 is not None:
+            x2 = torch.cat((x2, x_norm2_2), dim = 1)
 
         x1 = self.lin(x1) # These are optional
         x2 = self.lin(x2) # according to the paper (different methods)
@@ -65,7 +71,7 @@ class SpatialModel(torch.nn.Module):
     def __init__(self, input_size = 7, N1 = 128, N2 = 128, N3 = 64, N4 = 64, N5 = 16, L = 16, num_classes = 3):
         super().__init__()
         self.gat = GAT(input_size, N1, N2, N3, N4, L)
-        self.classifier = Classifier(N4, N5, num_classes)
+        self.classifier = Classifier(2*N4, N5, num_classes)
         
     def forward(self, x1, x2, edge_index1, edge_index2, batch, half_y, x_norm2_1, x_norm2_2, edge_col1 = None, edge_col2 = None):
         x1, x2 = self.gat(x1, x2, edge_index1, edge_index2, batch, half_y, x_norm2_1, x_norm2_2, edge_col1, edge_col2)
@@ -103,7 +109,80 @@ class DisjointModel(torch.nn.Module):
         
         return x
 
+dataset = CumulativeSoccerDataset(root="data", starting_year=2015, ending_year=2024, time_interval=30)
+model = SpatialModel(input_size=1, L=0)
+
+criterion = torch.nn.CrossEntropyLoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=0)
+
+model.train()
+num_epochs = 100
+
+for epoch in tqdm(range(num_epochs)):
+    epoch_loss = 0.0
+    for i in tqdm(range(200)):
+        data = dataset[i]
+        if data.home_x.size(0) == data.away_x.size(0):
+            batch = torch.zeros(data.home_x.size(0), dtype=torch.long, device=data.home_x.device)
+            optimizer.zero_grad()
+            x = model(
+                data.home_x, data.away_x,
+                data.home_edge_index, data.away_edge_index,
+                batch, None, None, None
+            )
+
+            loss = criterion(x.squeeze(), data.final_result)
+            loss.backward()
+            optimizer.step()
+
+            epoch_loss += loss.item()
+
+    print(f"Epoch {epoch+1}/{num_epochs}, Loss: {epoch_loss / len(dataset):.4f}")
 
 
-model = DisjointModel()
-print(model)
+
+"""
+model = DisjointModel(num_windows=3, input_size=1, L=0)
+criterion = torch.nn.CrossEntropyLoss()
+optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=0)
+
+model.train()
+num_epochs = 100
+losses = []
+
+for epoch in tqdm(range(num_epochs)):
+    epoch_loss = 0.0
+    for i in tqdm(range(200)):
+        count = 0
+        j = i
+        data = []
+        while count < 3 and j < 1000:
+            if dataset[j].home_x.size(0) == 11 and dataset[j].away_x.size(0) == 11:
+                count += 1
+                data.append(dataset[j])
+            j += 1
+        
+        # batch = all nodes belong to a single graph
+        batch = torch.zeros(data.home_x.size(0), dtype=torch.long, device=data.home_x.device)
+
+        # batch_home = torch.zeros(data.home_x.size(0), dtype=torch.long, device=data.home_x.device)
+        # batch_away = torch.zeros(data.away_x.size(0), dtype=torch.long, device=data.away_x.device)
+
+        optimizer.zero_grad()
+        x = model(
+            data.home_x, data.away_x,
+            data.home_edge_index, data.away_edge_index,
+            batch, None, None, None
+        )
+
+        loss = criterion(x.squeeze(), data.final_result)
+        loss.backward()
+        optimizer.step()
+
+        epoch_loss += loss.item()
+
+    losses.append(epoch_loss / len(dataset))
+    print(f"Epoch {epoch+1}/{num_epochs}, Loss: {epoch_loss / len(dataset):.4f}")
+
+    # TO DO: Update implementation of disjoint model to use "batch" rather than tensors of size "num_windows" for the different time windows.
+"""

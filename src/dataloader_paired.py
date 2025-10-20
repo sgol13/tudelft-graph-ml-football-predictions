@@ -276,7 +276,7 @@ class SoccerDataset(Dataset):
         return len(self.processed_file_names)
 
     def get(self, idx):
-        return torch.load(Path(self.processed_dir) / f"data_{idx}.pt")
+        return torch.load(Path(self.processed_dir) / f"data_{idx}.pt", weights_only=False)
     
     def get_season_indices(self, season_name: str) -> List[int]:
         """Get indices for a specific season."""
@@ -313,7 +313,7 @@ class CumulativeSoccerDataset(SoccerDataset):
 
 
 # Test the improved version
-dataset = SequentialSoccerDataset(root="../data", starting_year=2015, ending_year=2024, time_interval=30)
+dataset = CumulativeSoccerDataset(root="data", starting_year=2015, ending_year=2024, time_interval=30)
 print(f"Dataset length: {len(dataset)}")
 
 # Check the improved data structure
