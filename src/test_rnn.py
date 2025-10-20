@@ -3,6 +3,9 @@ import torch.nn as nn
 import torch.optim as optim
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
+from pathlib import Path
+import random
+
 
 from dataloader_paired import SequentialSoccerDataset
 from rnn import SimpleRNNModel
@@ -14,48 +17,68 @@ def graph_to_features(data):
     """
     home_nodes = data.home_x.size(0)
     away_nodes = data.away_x.size(0)
-    home_passes = data.home_edge_index.size(1)
-    away_passes = data.away_edge_index.size(1)
-    current_goal_diff = data.current_home_goals - data.current_away_goals
-    final_goal_diff = data.final_home_goals - data.final_away_goals
+    home_unique_passes = data.home_edge_index.size(1)
+    home_total_passes = data.home_edge_weight.sum()
+    away_unique_passes = data.away_edge_index.size(1)
+    away_total_passes = data.away_edge_weight.sum()
+
+    
 
     # simple numeric features
     features = torch.tensor([
         home_nodes, away_nodes, 
-        home_passes, away_passes, 
-        current_goal_diff, final_goal_diff
+        home_unique_passes, away_unique_passes,
+        home_total_passes, away_total_passes
     ], dtype=torch.float)
 
     return features
 
-
-def group_by_match(dataset):
-    """
-    Groups dataset samples into sequences per match.
-    Returns a list of sequences (each is a list of Data objects).
-    """
-    match_groups = {}
+def load_all_data(dataset):
+    data_list = []
     for i in range(len(dataset)):
-        data = dataset[i]
+        file = Path(dataset.processed_dir) / f"data_{i}.pt"
+        data_list.append(torch.load(file, weights_only=False))
+    return data_list
+
+# Now group by match in memory
+def group_by_match(data_list):
+    match_groups = {}
+    for data in data_list:
         key = f"{data.season}_{data.match_id}"
         if key not in match_groups:
             match_groups[key] = []
         match_groups[key].append(data)
+    return match_groups
 
-    # Sort intervals in order of time (start_minute)
-    for key in match_groups:
-        match_groups[key].sort(key=lambda d: d.start_minute.item())
-
-    return list(match_groups.values())
-
-def create_dataloaders(dataset, batch_size=1):
+def split_sequence(seq, train_ratio=0.8, test_ratio=0.2):
     """
-    Groups the dataset by match and returns train/test loaders.
+    Split a match sequence into train/test based on chronological snapshots.
+    Remaining snapshots (if any) are discarded or could be used for validation.
     """
-    all_sequences = group_by_match(dataset)
-    train_size = int(0.8 * len(all_sequences))
-    train_seqs = all_sequences[:train_size]
-    test_seqs = all_sequences[train_size:]
+    n = len(seq)
+    train_end = int(n * train_ratio)
+    test_end = train_end + int(n * test_ratio)
+
+    train_seq = seq[:train_end]
+    test_seq = seq[train_end:test_end]
+
+    return train_seq, test_seq
+
+def create_dataloaders(dataset, train_ratio=0.8, test_ratio=0.2):
+    data_list = load_all_data(dataset)
+    
+    # Group by match
+    match_groups = group_by_match(data_list)
+    
+    train_seqs = []
+    test_seqs = []
+
+    for seq in match_groups.values():
+        train_part, test_part = split_sequence(seq, train_ratio, test_ratio)
+        if len(train_part) > 0:
+            train_seqs.append(train_part)
+        if len(test_part) > 0:
+            test_seqs.append(test_part)
 
     return train_seqs, test_seqs
 
@@ -107,7 +130,7 @@ def main():
     print(f"Using device: {device}")
 
     # Load dataset
-    dataset = SequentialSoccerDataset(root='data', ending_year=2016)
+    dataset = SequentialSoccerDataset(root='data')
     print(f"Loaded dataset with {len(dataset)} samples")
 
     # Group into sequences
