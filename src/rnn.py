@@ -2,23 +2,20 @@ import torch
 import torch.nn as nn
 
 class SimpleRNNModel(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, output_size, bidirectional=False):
+    def __init__(self, input_size, hidden_size, num_layers, output_size):
         super(SimpleRNNModel, self).__init__()
 
         self.hidden_size = hidden_size
         self.num_layers = num_layers
-        self.bidirectional = bidirectional
-        self.num_directions = 2 if bidirectional else 1
 
         self.rnn = nn.RNN(
             input_size=input_size,
             hidden_size=hidden_size,
             num_layers=num_layers,
-            batch_first=True,          # input shape: (batch, seq, features)
-            bidirectional=bidirectional
+            batch_first=True          # input shape: (batch, seq, features)
         )
 
-        self.fc = nn.Linear(hidden_size * self.num_directions, output_size)
+        self.fc = nn.Linear(hidden_size, output_size)
 
     def forward(self, x):
         """
@@ -26,7 +23,7 @@ class SimpleRNNModel(nn.Module):
         returns: [batch, output_size]
         """
 
-        h0 = torch.zeros(self.num_layers * self.num_directions, x.size(0), self.hidden_size).to(x.device)
+        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
 
         out, hn = self.rnn(x, h0)   # out: [batch, seq_len, hidden_size]
 
