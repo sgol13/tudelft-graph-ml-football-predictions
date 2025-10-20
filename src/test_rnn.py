@@ -50,21 +50,21 @@ def group_by_match(data_list):
         match_groups[key].append(data)
     return match_groups
 
-def split_sequence(seq, train_ratio=0.8, test_ratio=0.2):
+
+def split_sequence(seq, train_ratio=0.8):
     """
-    Split a match sequence into train/test based on chronological snapshots.
-    Remaining snapshots (if any) are discarded or could be used for validation.
+    Split a single match sequence into train/test based on snapshots.
+    Returns train_seq, test_seq
     """
     n = len(seq)
-    train_end = int(n * train_ratio)
-    test_end = train_end + int(n * test_ratio)
+    split_idx = int(n * train_ratio)
+    return seq[:split_idx], seq[split_idx:]
 
-    train_seq = seq[:train_end]
-    test_seq = seq[train_end:test_end]
-
-    return train_seq, test_seq
-
-def create_dataloaders(dataset, train_ratio=0.8, test_ratio=0.2):
+def create_dataloaders(dataset):
+    """
+    Group dataset by match and split each match sequence 80/20.
+    Returns train_seqs and test_seqs (lists of sequences).
+    """
     data_list = load_all_data(dataset)
     
     # Group by match
@@ -74,13 +74,14 @@ def create_dataloaders(dataset, train_ratio=0.8, test_ratio=0.2):
     test_seqs = []
 
     for seq in match_groups.values():
-        train_part, test_part = split_sequence(seq, train_ratio, test_ratio)
+        train_part, test_part = split_sequence(seq)
         if len(train_part) > 0:
             train_seqs.append(train_part)
         if len(test_part) > 0:
             test_seqs.append(test_part)
 
     return train_seqs, test_seqs
+
 
 
 def train_one_epoch(model, train_seqs, criterion, optimizer, device):
