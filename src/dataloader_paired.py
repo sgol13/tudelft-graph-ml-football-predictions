@@ -278,7 +278,7 @@ class SoccerDataset(Dataset):
 
     def get(self, idx):
         file = Path(self.processed_dir) / f"data_{idx}.pt"
-        print(file)
+        #print(file)
         return torch.load(file, weights_only=False)
 
     def get_season_indices(self, season_name: str) -> List[int]:
