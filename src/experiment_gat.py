@@ -75,7 +75,8 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device):
             x2=x2,
             edge_index1=edge_index1,
             edge_index2=edge_index2,
-            batch=batch_idx1,  # Use home batch indices (both should be same structure)
+            batch1=batch_idx1,
+            batch2=batch_idx2,
             half_y=half_y,
             x_norm2_1=x_norm2_1,
             x_norm2_2=x_norm2_2,
