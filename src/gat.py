@@ -189,7 +189,7 @@ class DisjointModel(torch.nn.Module):
 
 def main():
     dataset = CumulativeSoccerDataset(
-        root="data", starting_year=2015, ending_year=2024, time_interval=30
+        root="data", starting_year=2015, ending_year=2016, time_interval=30
     )
     model = SpatialModel(input_size=1, L=0)
 
