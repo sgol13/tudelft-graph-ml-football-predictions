@@ -70,17 +70,14 @@ class GAT(torch.nn.Module):
         x1 = global_mean_pool(x1, batch1)
         x2 = global_mean_pool(x2, batch2)
 
-        x1 = torch.cat(
-            (x1, x_norm2_1), dim=1
-        )  # I assume x_norm2 are the global match features (?)
-        x2 = torch.cat((x2, x_norm2_2), dim=1)
-
+        # Concatenate global features (x_norm2)
         if x_norm2_1 is not None:
-            x1 = torch.cat(
-                (x1, x_norm2_1), dim=1
-            )  # I assume x_norm2 are the global match features (?)
+            x1 = torch.cat((x1, x_norm2_1), dim=1)
         if x_norm2_2 is not None:
             x2 = torch.cat((x2, x_norm2_2), dim=1)
+
+        x1 = self.lin(x1)
+        x2 = self.lin(x2)
 
         return x1, x2
 
@@ -91,7 +88,8 @@ class SpatialModel(torch.nn.Module):
     ):
         super().__init__()
         self.gat = GAT(input_size, N1, N2, N3, N4, L)
-        self.classifier = Classifier(N4, N5, num_classes)
+        # After GAT, each graph has dimension N4, and we concatenate two graphs
+        self.classifier = Classifier(2 * N4, N5, num_classes)
 
     def forward(
         self,
