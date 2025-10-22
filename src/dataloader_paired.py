@@ -309,7 +309,7 @@ class SequentialSoccerDataset(SoccerDataset):
 
     @property
     def processed_dir(self) -> str:
-        return Path(self.root).joinpath("processed_sequential_hetero").as_posix()
+        return Path(self.root).joinpath("processed_sequential").as_posix()
 
 
 class CumulativeSoccerDataset(SoccerDataset):
@@ -322,7 +322,7 @@ class CumulativeSoccerDataset(SoccerDataset):
 
     @property
     def processed_dir(self) -> str:
-        return Path(self.root).joinpath("processed_cumulative_hetero").as_posix()
+        return Path(self.root).joinpath("processed_cumulative").as_posix()
 
 
 def main():
