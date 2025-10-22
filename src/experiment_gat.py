@@ -30,18 +30,6 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device):
         # Get batch size (number of graphs in this batch)
         batch_size = batch_idx1.max().item() + 1
 
-        # Current score as a feature (one per graph)
-        half_y = torch.stack(
-            [
-                torch.tensor(
-                    [batch.current_home_goals[i], batch.current_away_goals[i]],
-                    dtype=torch.float,
-                    device=device,
-                )
-                for i in range(batch_size)
-            ]
-        )
-
         # Edge weights - compute mean per graph for global features
         edge_weight1 = batch["home", "passes_to", "home"].edge_weight
         edge_weight2 = batch["away", "passes_to", "away"].edge_weight
@@ -77,7 +65,6 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device):
             edge_index2=edge_index2,
             batch1=batch_idx1,
             batch2=batch_idx2,
-            half_y=half_y,
             x_norm2_1=x_norm2_1,
             x_norm2_2=x_norm2_2,
             edge_col1=edge_col1,
@@ -196,16 +183,11 @@ def main():
     print(f"Train size: {train_size}, Test size: {test_size}")
 
     # PyG's DataLoader works directly with HeteroData
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=32,
-        shuffle=True,
-        num_workers=0,  # Set to 0 for debugging, increase for performance
-    )
-    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False, num_workers=0)
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=False)  # type: ignore
+    test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)  # type: ignore
 
     # Model setup
-    input_size = 1  # Number of node features (player index)
+    input_size = 1  # Number of node features
     L = 16  # Additional features dimension
     model = SpatialModel(input_size=input_size, L=L).to(device)
 
@@ -218,7 +200,7 @@ def main():
     epoch_progress = tqdm(range(num_epochs), desc="Epochs")
 
     best_acc = 0.0
-    for epoch in epoch_progress:
+    for _ in epoch_progress:
         train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device)
         test_loss, test_acc = evaluate(model, test_loader, criterion, device)
 
