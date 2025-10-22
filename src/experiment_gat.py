@@ -73,6 +73,9 @@ def forward_pass(batch, model, device):
     edge_weight1 = batch["home", "passes_to", "home"].edge_weight
     edge_weight2 = batch["away", "passes_to", "away"].edge_weight
 
+    normalized_edge_weight1 = edge_weight1 / (edge_weight1.max() + 1e-8)
+    normalized_edge_weight2 = edge_weight2 / (edge_weight2.max() + 1e-8)
+
     # Extract global features from metadata
     x_norm2_1, x_norm2_2 = extract_global_features(batch, batch_size, device)
 
@@ -86,8 +89,8 @@ def forward_pass(batch, model, device):
         batch2=batch_idx2,
         x_norm2_1=x_norm2_1,
         x_norm2_2=x_norm2_2,
-        edge_col1=edge_weight1,
-        edge_col2=edge_weight2,
+        edge_col1=normalized_edge_weight1,
+        edge_col2=normalized_edge_weight2,
     )
 
     # y shape: (batch_size,)
