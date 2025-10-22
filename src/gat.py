@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.nn import ELU, RNN, Linear, Softmax
+from torch.nn import ELU, RNN, Linear
 from torch_geometric.nn import GATConv, global_mean_pool
 from tqdm import tqdm
 
@@ -13,22 +13,20 @@ class Classifier(torch.nn.Module):
         super().__init__()
         self.lin1 = Linear(input_size, hidden_size)
         self.lin2 = Linear(hidden_size, num_classes)
-        self.softmax = Softmax(dim=1)
 
     def forward(self, x):
         x = self.lin1(x)
         x = self.lin2(x)
-        x = self.softmax(x)
 
         return x
 
 
 class GAT(torch.nn.Module):
-    def __init__(self, input_size=7, N1=128, N2=128, N3=64, N4=64, L=16):
+    def __init__(self, input_size=7, N1=128, N2=128, N3=64, N4=64, L=16, edge_dim=1):
         super().__init__()
-        self.conv1 = GATConv(input_size, N1)
-        self.conv2 = GATConv(N1, N2)
-        self.conv3 = GATConv(N2, N3)
+        self.conv1 = GATConv(input_size, N1, edge_dim=edge_dim)
+        self.conv2 = GATConv(N1, N2, edge_dim=edge_dim)
+        self.conv3 = GATConv(N2, N3, edge_dim=edge_dim)
 
         self.lin = Linear(N3 + L, N4)
         self.elu = ELU()
