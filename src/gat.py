@@ -40,8 +40,8 @@ class GAT(torch.nn.Module):
         x2,
         edge_index1,
         edge_index2,
-        batch,
-        half_y,
+        batch1,
+        batch2,
         x_norm2_1,
         x_norm2_2,
         edge_col1=None,
@@ -67,8 +67,9 @@ class GAT(torch.nn.Module):
         x2 = F.dropout(x2, p=0.5, training=self.training)
 
         # 2. Readout layer
-        x1 = global_mean_pool(x1, batch)  # This can be changed (Experiment?)
-        x2 = global_mean_pool(x2, batch)  # This can be changed (Experiment?)
+        # Two batches since graphs don't necessarily have the same number of nodes
+        x1 = global_mean_pool(x1, batch1)
+        x2 = global_mean_pool(x2, batch2)
 
         x1 = torch.cat(
             (x1, x_norm2_1), dim=1
@@ -97,8 +98,8 @@ class SpatialModel(torch.nn.Module):
         x2,
         edge_index1,
         edge_index2,
-        batch,
-        half_y,
+        batch1,
+        batch2,
         x_norm2_1,
         x_norm2_2,
         edge_col1=None,
@@ -109,8 +110,8 @@ class SpatialModel(torch.nn.Module):
             x2,
             edge_index1,
             edge_index2,
-            batch,
-            half_y,
+            batch1,
+            batch2,
             x_norm2_1,
             x_norm2_2,
             edge_col1,
@@ -168,6 +169,8 @@ class DisjointModel(torch.nn.Module):
 
         outputs = np.zeros(shape=(1, self.num_windows, self.N4))
         for i in range(self.num_windows):
+            this_edge_col1 = [edge_col1[i, :]] if edge_col1 is not None else None
+            this_edge_col2 = [edge_col2[i, :]] if edge_col2 is not None else None
             x1, x2 = self.gat(
                 x1[i, :],
                 x2[i, :],
@@ -177,8 +180,8 @@ class DisjointModel(torch.nn.Module):
                 half_y[i, :],
                 x_norm2_1[i, :],
                 x_norm2_2[i, :],
-                edge_col1[i, :],
-                edge_col2[i, :],
+                this_edge_col1,
+                this_edge_col2,
             )
             outputs[0, i, :] = torch.cat((x1, x2), dim=1)
 
