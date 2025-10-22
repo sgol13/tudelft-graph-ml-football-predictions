@@ -76,6 +76,7 @@ def forward_pass(batch, model, device):
     # Extract global features from metadata
     x_norm2_1, x_norm2_2 = extract_global_features(batch, batch_size, device)
 
+    # out shape: (batch_size, 3)
     out = model(
         x1=x1,
         x2=x2,
@@ -89,7 +90,8 @@ def forward_pass(batch, model, device):
         edge_col2=edge_weight2,
     )
 
-    y = batch.y.reshape(-1, 3)
+    # y shape: (batch_size,)
+    y = batch.y.reshape(-1, 3).argmax(dim=1)
     return out, y
 
 
