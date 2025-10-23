@@ -427,7 +427,7 @@ class CumulativeSoccerDataset(SoccerDataset):
 def main():
     # Test the improved version
     dataset = SequentialSoccerDataset(
-        root="../data", starting_year=2015, ending_year=2024, time_interval=30
+        root="../data", starting_year=2015, ending_year=2016, time_interval=30
     )
     print(f"Dataset length: {len(dataset)}")
 
@@ -435,20 +435,21 @@ def main():
     if len(dataset) > 0:
         for i in range(min(5, len(dataset))):
             data = dataset[i]
-            print(f"\nData point {i}:")
-            print(f"Match: {data.home_team} vs {data.away_team}")
-            print(f"Season: {data.season}, Time: {data.start_minute}-{data.end_minute}")
-            print(
-                f"Home graph: {data['home'].x.shape[0]} players, {data['home', 'passes_to', 'home'].edge_index.shape[1]} passes"
-            )
-            print(
-                f"Away graph: {data['away'].x.shape[0]} players, {data['away', 'passes_to', 'away'].edge_index.shape[1]} passes"
-            )
-            print(f"Current goals: {data.current_home_goals}-{data.current_away_goals}")
-            print(f"Final goals: {data.final_home_goals}-{data.final_away_goals}")
-            print(f"Final result: {data.y}")
-            print(f"All node types: {data.node_types}")
-            print(f"All edge types: {data.edge_types}")
+            print(type(data))
+            # print(f"\nData point {i}:")
+            # print(f"Match: {data.home_team} vs {data.away_team}")
+            # print(f"Season: {data.season}, Time: {data.start_minute}-{data.end_minute}")
+            # print(
+            #     f"Home graph: {data['home'].x.shape[0]} players, {data['home', 'passes_to', 'home'].edge_index.shape[1]} passes"
+            # )
+            # print(
+            #     f"Away graph: {data['away'].x.shape[0]} players, {data['away', 'passes_to', 'away'].edge_index.shape[1]} passes"
+            # )
+            # print(f"Current goals: {data.current_home_goals}-{data.current_away_goals}")
+            # print(f"Final goals: {data.final_home_goals}-{data.final_away_goals}")
+            # print(f"Final result: {data.y}")
+            # print(f"All node types: {data.node_types}")
+            # print(f"All edge types: {data.edge_types}")
 
 
 if __name__ == "__main__":
