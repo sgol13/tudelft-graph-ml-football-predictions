@@ -27,20 +27,20 @@ class VARMABaseline(nn.Module):
         
         batch_size, seq_len, input_size = Y.shape
 
-        # Compute prediction for the last timestep (many-to-one)
-        if seq_len < self.p:
-            raise ValueError(f"Sequence too short: got {seq_len}, need at least p={self.p}")
-
         # Start with zeros
         hidden = torch.zeros(batch_size, self.hidden_size, device=Y.device)
 
+        # --- Handle short sequences safely ---
+        effective_p = min(self.p, seq_len)
+        effective_q = min(self.q, e.shape[1] if e is not None else 0)
+
         # AR component
-        for i in range(1, self.p + 1):
+        for i in range(1, effective_p + 1):
             hidden += self.AR[i - 1](Y[:, -i, :])  # use last p steps
 
         # MA component 
-        if e is not None and self.q > 0:
-            for j in range(1, self.q + 1):
+        if e is not None and effective_q > 0:
+            for j in range(1, effective_q + 1):
                 hidden += self.MA[j - 1](e[:, -j, :])
 
         # Nonlinearity
