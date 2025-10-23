@@ -5,7 +5,7 @@ from typing import List
 
 import pandas as pd
 import torch
-from torch_geometric.data import Data, Dataset
+from torch_geometric.data import Data, Dataset, HeteroData
 from tqdm import tqdm
 
 
@@ -68,7 +68,7 @@ def get_final_result(
     home_goals = events[(events["team"] == home_team) & (events["is_goal"])].shape[0]
     away_goals = events[(events["team"] == away_team) & (events["is_goal"])].shape[0]
 
-    # Create one-hot encoding for CrossEntropyLoss
+    # Create one-hot encoding
     if home_goals > away_goals:
         result_tensor = torch.tensor([1, 0, 0], dtype=torch.float)  # Home Win
     elif home_goals == away_goals:
@@ -81,7 +81,6 @@ def get_final_result(
 
 def build_graph(pass_counts: Counter, team_players: list) -> Data:
     """Build graph - handles empty pass cases gracefully."""
-    # DISCLAIMER, IF WE EVER WANT TO ADD TEAM INFO, THIS SHOULD HAVE THE NAME OF THE TEAM and others
     if not pass_counts or len(team_players) == 0:
         # Return empty graph instead of crashing
         x = torch.zeros((max(1, len(team_players)), 1), dtype=torch.float)
@@ -99,7 +98,7 @@ def build_graph(pass_counts: Counter, team_players: list) -> Data:
 
 def build_team_graphs_with_goals(
     events, home_team: str, away_team: str, time_interval=5, cumulative=False
-) -> List[Data]:
+) -> List[HeteroData]:
     """Build paired graphs with both home and away teams for each time interval."""
     if events.empty or "minute" not in events.columns:
         return []
@@ -116,8 +115,8 @@ def build_team_graphs_with_goals(
     cumulative_team_players = defaultdict(set)
 
     # Iterate over time intervals
-    for start_minute in range(0, max_minute, time_interval):
-        end_minute = min(start_minute + time_interval, max_minute + 1)
+    for start_minute in range(0, int(max_minute), time_interval):
+        end_minute = min(start_minute + time_interval, int(max_minute) + 1)
         events_in_interval = events[
             (events["minute"] >= start_minute)
             & (events["minute"] < end_minute)
@@ -128,9 +127,6 @@ def build_team_graphs_with_goals(
         current_home_goals, current_away_goals = count_goals(
             events, end_minute, home_team, away_team
         )
-
-        home_graph = None
-        away_graph = None
 
         # Process HOME team
         home_events = events_in_interval[events_in_interval["team"] == home_team]
@@ -176,33 +172,35 @@ def build_team_graphs_with_goals(
 
         away_graph = build_graph(away_pass_counts, away_players)
 
-        # Create PAIRED data point with both teams
-        paired_data = Data(
-            # Home team graph data
-            home_x=home_graph.x,
-            home_edge_index=home_graph.edge_index,
-            home_edge_weight=home_graph.edge_weight,
-            home_players=home_players,
-            # Away team graph data
-            away_x=away_graph.x,
-            away_edge_index=away_graph.edge_index,
-            away_edge_weight=away_graph.edge_weight,
-            away_players=away_players,
-            # Time information
-            start_minute=torch.tensor(start_minute, dtype=torch.long),
-            end_minute=torch.tensor(end_minute, dtype=torch.long),
-            # Goal information
-            current_home_goals=current_home_goals,
-            current_away_goals=current_away_goals,
-            final_home_goals=final_home_goals,
-            final_away_goals=final_away_goals,
-            final_result=final_result_onehot,
-            # Team names
-            home_team=home_team,
-            away_team=away_team,
-        )
+        # Create HeteroData with separate node types for home/away
+        hetero_data = HeteroData()
 
-        paired_graphs.append(paired_data)
+        # Home team graph
+        hetero_data["home"].x = home_graph.x
+        hetero_data["home", "passes_to", "home"].edge_index = home_graph.edge_index
+        hetero_data["home", "passes_to", "home"].edge_weight = home_graph.edge_weight
+
+        # Away team graph
+        hetero_data["away"].x = away_graph.x
+        hetero_data["away", "passes_to", "away"].edge_index = away_graph.edge_index
+        hetero_data["away", "passes_to", "away"].edge_weight = away_graph.edge_weight
+
+        # Metadata (stored as attributes on the HeteroData object)
+        hetero_data.start_minute = torch.tensor(start_minute, dtype=torch.long)
+        hetero_data.end_minute = torch.tensor(end_minute, dtype=torch.long)
+        hetero_data.y = final_result_onehot  # Keep as one-hot for now
+        hetero_data.current_home_goals = torch.tensor(
+            current_home_goals, dtype=torch.long
+        )
+        hetero_data.current_away_goals = torch.tensor(
+            current_away_goals, dtype=torch.long
+        )
+        hetero_data.final_home_goals = torch.tensor(final_home_goals, dtype=torch.long)
+        hetero_data.final_away_goals = torch.tensor(final_away_goals, dtype=torch.long)
+        hetero_data.home_team = home_team
+        hetero_data.away_team = away_team
+
+        paired_graphs.append(hetero_data)
 
     return paired_graphs
 
@@ -236,7 +234,7 @@ class SoccerDataset(Dataset):
 
     def _process_match(
         self, events: pd.DataFrame, home_team: str, away_team: str
-    ) -> List[Data]:
+    ) -> List[HeteroData]:
         raise NotImplementedError()
 
     def process(self):
@@ -256,21 +254,20 @@ class SoccerDataset(Dataset):
                 away_team = match["away_team"]
                 match_id = match.get("game_id", f"{season_name}_{idx}")
 
-                # Get paired graphs for this match
                 paired_graphs = self._process_match(events, home_team, away_team)
 
-                for paired_data in paired_graphs:
-                    # Store rich context information
-                    paired_data.season = season_name
-                    paired_data.match_id = match_id
-                    paired_data.data_id = idx
+                for hetero_data in paired_graphs:
+                    # Add metadata as attributes directly on HeteroData
+                    hetero_data.season = season_name
+                    hetero_data.match_id = match_id
+                    hetero_data.data_id = idx
 
-                    if self.pre_filter is not None and not self.pre_filter(paired_data):
+                    if self.pre_filter is not None and not self.pre_filter(hetero_data):
                         continue
                     if self.pre_transform is not None:
-                        paired_data = self.pre_transform(paired_data)
+                        hetero_data = self.pre_transform(hetero_data)
 
-                    torch.save(paired_data, Path(self.processed_dir) / f"data_{idx}.pt")
+                    torch.save(hetero_data, Path(self.processed_dir) / f"data_{idx}.pt")
                     idx += 1
 
     def len(self):
@@ -278,7 +275,6 @@ class SoccerDataset(Dataset):
 
     def get(self, idx):
         file = Path(self.processed_dir) / f"data_{idx}.pt"
-        #print(file)
         return torch.load(file, weights_only=False)
 
     def get_season_indices(self, season_name: str) -> List[int]:
@@ -306,7 +302,7 @@ class SoccerDataset(Dataset):
 class SequentialSoccerDataset(SoccerDataset):
     def _process_match(
         self, events: pd.DataFrame, home_team: str, away_team: str
-    ) -> List[Data]:
+    ) -> List[HeteroData]:
         return build_team_graphs_with_goals(
             events, home_team, away_team, self.time_interval, cumulative=False
         )
@@ -319,7 +315,7 @@ class SequentialSoccerDataset(SoccerDataset):
 class CumulativeSoccerDataset(SoccerDataset):
     def _process_match(
         self, events: pd.DataFrame, home_team: str, away_team: str
-    ) -> List[Data]:
+    ) -> List[HeteroData]:
         return build_team_graphs_with_goals(
             events, home_team, away_team, self.time_interval, cumulative=True
         )
@@ -331,7 +327,7 @@ class CumulativeSoccerDataset(SoccerDataset):
 
 def main():
     # Test the improved version
-    dataset = CumulativeSoccerDataset(
+    dataset = SequentialSoccerDataset(
         root="../data", starting_year=2015, ending_year=2024, time_interval=30
     )
     print(f"Dataset length: {len(dataset)}")
@@ -344,15 +340,16 @@ def main():
             print(f"Match: {data.home_team} vs {data.away_team}")
             print(f"Season: {data.season}, Time: {data.start_minute}-{data.end_minute}")
             print(
-                f"Home graph: {data.home_x.shape[0]} players, {data.home_edge_index.shape[1]} passes"
+                f"Home graph: {data['home'].x.shape[0]} players, {data['home', 'passes_to', 'home'].edge_index.shape[1]} passes"
             )
             print(
-                f"Away graph: {data.away_x.shape[0]} players, {data.away_edge_index.shape[1]} passes"
+                f"Away graph: {data['away'].x.shape[0]} players, {data['away', 'passes_to', 'away'].edge_index.shape[1]} passes"
             )
             print(f"Current goals: {data.current_home_goals}-{data.current_away_goals}")
             print(f"Final goals: {data.final_home_goals}-{data.final_away_goals}")
-            print(f"Final result: {data.final_result}")
-            print(f"All attributes: {list(data.keys())}")
+            print(f"Final result: {data.y}")
+            print(f"All node types: {data.node_types}")
+            print(f"All edge types: {data.edge_types}")
 
 
 if __name__ == "__main__":
