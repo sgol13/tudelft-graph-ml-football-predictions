@@ -7,32 +7,62 @@ import pandas as pd
 import torch
 from torch_geometric.data import Data, Dataset, HeteroData
 from tqdm import tqdm
+import numpy as np
 
 
 def count_passes(
     team_events: pd.DataFrame,
-) -> tuple[Counter[tuple[int, int]], list[str]]:
+) -> tuple[Counter[tuple[int, int]], dict[str,tuple[float,float, float]], list[str]]:
     """Count successful passes within a team over given events."""
     if team_events.empty:
-        return Counter(), []
+        return Counter(), {}, []
 
     team_players = team_events["player"].dropna().unique().astype(str)
     player_to_idx = {p: i for i, p in enumerate(team_players)}
+    players_pass_positions_x = {player: [] for player in team_players}
+    players_pass_positions_y = {player: [] for player in team_players}
 
-    rows = team_events[["type", "outcome_type", "player"]].to_numpy()
+    rows = team_events[["type", "outcome_type", "player", "x", "y", "end_x", "end_y"]].to_numpy()
     passes = []
     pass_from = None
+    receiving_x = None
+    receiving_y = None
 
-    for event_type, outcome_type, player in rows:
+    for event_type, outcome_type, player, x, y, end_x, end_y in rows:
         if event_type == "Pass" and outcome_type == "Successful":
             if player not in player_to_idx:
                 continue
             if pass_from is not None and pass_from in player_to_idx:
                 passes.append((player_to_idx[pass_from], player_to_idx[player]))
+                if x is not None and y is not None:
+                    players_pass_positions_x[pass_from].append(x)
+                    players_pass_positions_y[pass_from].append(y)
+
+                if receiving_x is not None and receiving_y is not None:
+                    players_pass_positions_x[player].append(receiving_x)
+                    players_pass_positions_y[player].append(receiving_y)
+                
         pass_from = player
+        receiving_x = end_x
+        receiving_y = end_y
 
     pass_counts = Counter(passes)
-    return pass_counts, team_players.tolist()
+    players_positions = {}
+    for player in team_players:
+        x_positions = players_pass_positions_x[player]
+        y_positions = players_pass_positions_y[player]
+        
+        if x_positions and y_positions:
+            mean_x = np.mean(x_positions)
+            mean_y = np.mean(y_positions)
+            is_valid = 1.0 # Valid position
+        else:
+            mean_x, mean_y = 50.0, 50.0 # Midfield
+            is_valid = 0.0  # Invalid/imputed position
+            
+        players_positions[player] = (mean_x, mean_y, is_valid)    
+
+    return pass_counts, players_positions, team_players.tolist()
 
 
 def count_goals(
@@ -79,19 +109,31 @@ def get_final_result(
     return home_goals, away_goals, result_tensor
 
 
-def build_graph(pass_counts: Counter, team_players: list) -> Data:
+def build_graph(pass_counts: Counter, player_positions: dict, team_players: list) -> Data:
     """Build graph - handles empty pass cases gracefully."""
     if not pass_counts or len(team_players) == 0:
-        # Return empty graph instead of crashing
-        x = torch.zeros((max(1, len(team_players)), 1), dtype=torch.float)
+        # Handle empty case
+        x = torch.zeros((max(1, len(team_players)), 4), dtype=torch.float)
         edge_index = torch.zeros((2, 0), dtype=torch.long)
         edge_weight = torch.zeros(0, dtype=torch.float)
     else:
-        edge_index = (
-            torch.tensor(list(pass_counts.keys()), dtype=torch.long).t().contiguous()
-        )
+        # Build edges
+        edge_index = torch.tensor(list(pass_counts.keys()), dtype=torch.long).t().contiguous()
         edge_weight = torch.tensor(list(pass_counts.values()), dtype=torch.float)
-        x = torch.arange(len(team_players), dtype=torch.float).unsqueeze(1)
+        
+        # Enhanced node features: [player_id, position_x, position_y]
+        x_list = []
+        player_to_idx = {p: i for i, p in enumerate(team_players)}
+        
+        for player in team_players:
+            player_id = player_to_idx[player]
+            if player in player_positions:
+                pos_x, pos_y, pos_valid = player_positions[player]
+                x_list.append([float(player_id), pos_x, pos_y, pos_valid])
+            else:
+                x_list.append([float(player_id), 50.0, 50.0, 0.0])
+        
+        x = torch.tensor(x_list, dtype=torch.float)
 
     return Data(x=x, edge_index=edge_index, edge_weight=edge_weight)
 
@@ -113,6 +155,7 @@ def build_team_graphs_with_goals(
     paired_graphs = []
     cumulative_pass_counts = defaultdict(Counter)
     cumulative_team_players = defaultdict(set)
+    cumulative_player_positions = defaultdict(lambda: defaultdict(list))
 
     # Iterate over time intervals
     for start_minute in range(0, int(max_minute), time_interval):
@@ -130,7 +173,7 @@ def build_team_graphs_with_goals(
 
         # Process HOME team
         home_events = events_in_interval[events_in_interval["team"] == home_team]
-        home_pass_counts, home_players = count_passes(home_events)
+        home_pass_counts, home_positions, home_players = count_passes(home_events)
 
         if cumulative and home_pass_counts:
             for (i, j), count in home_pass_counts.items():
@@ -148,11 +191,38 @@ def build_team_graphs_with_goals(
                 }
             )
 
-        home_graph = build_graph(home_pass_counts, home_players)
+            # Save positions up to current interval
+            for player, position in home_positions.items():
+                if player in cumulative_player_positions[home_team]:
+                    cumulative_player_positions[home_team][player].append(position)
+                else:
+                    cumulative_player_positions[home_team][player] = [position]
+            
+            # Calculate MEAN of cumulative positions up to current interval
+            current_cumulative_positions = {}
+            for player, positions_list in cumulative_player_positions[home_team].items():
+                if positions_list:
+                    valid_positions = [pos for pos in positions_list if pos[2] == 1.0]  # Only use valid ones
+                    if valid_positions:
+                        mean_x = np.mean([pos[0] for pos in valid_positions])
+                        mean_y = np.mean([pos[1] for pos in valid_positions])
+                        is_valid = 1.0
+                    else:
+                        mean_x, mean_y = 50.0, 50.0
+                        is_valid = 0.0
+                else:
+                    mean_x, mean_y = 50.0, 50.0
+                    is_valid = 0.0
+                
+                current_cumulative_positions[player] = (mean_x, mean_y, is_valid)
+            
+            home_positions = current_cumulative_positions
+
+        home_graph = build_graph(home_pass_counts, home_positions, home_players)
 
         # Process AWAY team
         away_events = events_in_interval[events_in_interval["team"] == away_team]
-        away_pass_counts, away_players = count_passes(away_events)
+        away_pass_counts, away_positions, away_players = count_passes(away_events)
 
         if cumulative and away_pass_counts:
             for (i, j), count in away_pass_counts.items():
@@ -170,7 +240,36 @@ def build_team_graphs_with_goals(
                 }
             )
 
-        away_graph = build_graph(away_pass_counts, away_players)
+            # Save positions up to current interval
+            for player, position in away_positions.items():
+                # position is (x, y, is_valid)
+                if player in cumulative_player_positions[away_team]:
+                    cumulative_player_positions[away_team][player].append(position)
+                else:
+                    cumulative_player_positions[away_team][player] = [position]
+            
+            # Calculate MEAN of cumulative positions up to current interval
+            current_cumulative_positions = {}
+            for player, positions_list in cumulative_player_positions[away_team].items():
+                if positions_list:
+                    # Only average if we have valid positions
+                    valid_positions = [pos for pos in positions_list if pos[2] == 1.0]  # Only use valid ones
+                    if valid_positions:
+                        mean_x = np.mean([pos[0] for pos in valid_positions])
+                        mean_y = np.mean([pos[1] for pos in valid_positions])
+                        is_valid = 1.0
+                    else:
+                        mean_x, mean_y = 50.0, 50.0
+                        is_valid = 0.0
+                else:
+                    mean_x, mean_y = 50.0, 50.0
+                    is_valid = 0.0
+                
+                current_cumulative_positions[player] = (mean_x, mean_y, is_valid)  # FIXED: 3-tuple
+            
+            away_positions = current_cumulative_positions
+
+        away_graph = build_graph(away_pass_counts, away_positions, away_players)
 
         # Create HeteroData with separate node types for home/away
         hetero_data = HeteroData()
@@ -328,7 +427,7 @@ class CumulativeSoccerDataset(SoccerDataset):
 def main():
     # Test the improved version
     dataset = SequentialSoccerDataset(
-        root="../data", starting_year=2015, ending_year=2024, time_interval=30
+        root="../data", starting_year=2015, ending_year=2016, time_interval=30
     )
     print(f"Dataset length: {len(dataset)}")
 
@@ -336,20 +435,21 @@ def main():
     if len(dataset) > 0:
         for i in range(min(5, len(dataset))):
             data = dataset[i]
-            print(f"\nData point {i}:")
-            print(f"Match: {data.home_team} vs {data.away_team}")
-            print(f"Season: {data.season}, Time: {data.start_minute}-{data.end_minute}")
-            print(
-                f"Home graph: {data['home'].x.shape[0]} players, {data['home', 'passes_to', 'home'].edge_index.shape[1]} passes"
-            )
-            print(
-                f"Away graph: {data['away'].x.shape[0]} players, {data['away', 'passes_to', 'away'].edge_index.shape[1]} passes"
-            )
-            print(f"Current goals: {data.current_home_goals}-{data.current_away_goals}")
-            print(f"Final goals: {data.final_home_goals}-{data.final_away_goals}")
-            print(f"Final result: {data.y}")
-            print(f"All node types: {data.node_types}")
-            print(f"All edge types: {data.edge_types}")
+            print(type(data))
+            # print(f"\nData point {i}:")
+            # print(f"Match: {data.home_team} vs {data.away_team}")
+            # print(f"Season: {data.season}, Time: {data.start_minute}-{data.end_minute}")
+            # print(
+            #     f"Home graph: {data['home'].x.shape[0]} players, {data['home', 'passes_to', 'home'].edge_index.shape[1]} passes"
+            # )
+            # print(
+            #     f"Away graph: {data['away'].x.shape[0]} players, {data['away', 'passes_to', 'away'].edge_index.shape[1]} passes"
+            # )
+            # print(f"Current goals: {data.current_home_goals}-{data.current_away_goals}")
+            # print(f"Final goals: {data.final_home_goals}-{data.final_away_goals}")
+            # print(f"Final result: {data.y}")
+            # print(f"All node types: {data.node_types}")
+            # print(f"All edge types: {data.edge_types}")
 
 
 if __name__ == "__main__":
