@@ -15,14 +15,12 @@ def graph_to_features(data):
     Converts a graph-based match snapshot into a fixed-length feature vector.
     You can expand this later with more sophisticated stats.
     """
-    home_nodes = data.home_x.size(0)
-    away_nodes = data.away_x.size(0)
-    home_unique_passes = data.home_edge_index.size(1)
-    home_total_passes = data.home_edge_weight.sum()
-    away_unique_passes = data.away_edge_index.size(1)
-    away_total_passes = data.away_edge_weight.sum()
-
-    
+    home_nodes = data["home"].x.size(0)
+    away_nodes = data["away"].x.size(0)
+    home_unique_passes = data["home", "passes_to", "home"].edge_index.size(1)
+    away_unique_passes = data["away", "passes_to", "away"].edge_index.size(1)
+    home_total_passes = data["home", "passes_to", "home"].edge_weight.sum()
+    away_total_passes = data["away", "passes_to", "away"].edge_weight.sum()
 
     # simple numeric features
     features = torch.tensor([
@@ -91,7 +89,7 @@ def train_one_epoch(model, train_seqs, criterion, optimizer, device):
     for seq in tqdm(train_seqs, desc="Training"):
         # Build the sequence tensor
         features = torch.stack([graph_to_features(d) for d in seq]).unsqueeze(0).to(device)  # [1, seq_len, input_size]
-        target = torch.argmax(seq[-1].final_result).unsqueeze(0).to(device)  # class index
+        target = torch.argmax(seq[-1]["y"]).unsqueeze(0).to(device)  # class index
 
         optimizer.zero_grad()
         output = model(features)
@@ -112,7 +110,7 @@ def evaluate(model, test_seqs, criterion, device):
 
     for seq in tqdm(test_seqs, desc="Evaluating"):
         features = torch.stack([graph_to_features(d) for d in seq]).unsqueeze(0).to(device)
-        target = torch.argmax(seq[-1].final_result).unsqueeze(0).to(device)
+        target = torch.argmax(seq[-1]["y"]).unsqueeze(0).to(device)
 
         output = model(features)
         loss = criterion(output, target)
@@ -131,7 +129,7 @@ def main():
     print(f"Using device: {device}")
 
     # Load dataset
-    dataset = SequentialSoccerDataset(root='data')
+    dataset = SequentialSoccerDataset(root='data', ending_year=2015)
     print(f"Loaded dataset with {len(dataset)} samples")
 
     # Group into sequences
