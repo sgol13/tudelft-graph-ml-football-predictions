@@ -165,7 +165,7 @@ def main():
     test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)  # type: ignore
 
     # Model setup
-    input_size = 1  # Number of node features
+    input_size = 4  # Number of node features
     L = 6  # Additional features dimension
     model = SpatialModel(input_size=input_size, L=L).to(device)
 
