@@ -5,7 +5,7 @@ from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 
 from dataloader_paired import SequentialSoccerDataset
-from gat import SpatialModel
+from src.models.gat import SpatialModel
 
 
 def extract_global_features(batch, batch_size, device):
