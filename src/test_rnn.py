@@ -168,7 +168,7 @@ def main():
             f"Epoch [{epoch+1}/{epochs}] - Train Loss: {train_loss:.4f}, Test Loss: {val_loss:.4f}, Test Acc: {val_acc:.4f}"
         )
 
-    torch.save(model.state_dict(), "rnn_soccer_model.pt")
+    torch.save(model.state_dict(), "model_backups/rnn_soccer_model.pt")
 
 
 if __name__ == "__main__":
