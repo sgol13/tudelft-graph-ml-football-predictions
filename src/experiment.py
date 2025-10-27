@@ -6,10 +6,11 @@ import torch.optim as optim
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 
+from dataloader_paired import GroupedSoccerDataset
 from experiment_configs import EXPERIMENTS
 
 
-def train_one_epoch(model, dataloader, criterion, optimizer, device, forward_pass=None):
+def train_one_epoch(model, dataloader, criterion, optimizer, device, forward_pass):
     model.train()
     total_loss = 0.0
 
@@ -31,7 +32,7 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, forward_pas
 
 
 @torch.no_grad()
-def evaluate(model, dataloader, criterion, device, forward_pass=None):
+def evaluate(model, dataloader, criterion, device, forward_pass):
     model.eval()
     total_loss = 0.0
     correct = 0
@@ -72,10 +73,10 @@ def main():
     print(f"Using device: {device}")
 
     # Dataset
-    dataset = cfg.dataset
+    dataset = cfg.dataset_factory()
     print(f"Dataset size: {len(dataset)}")
 
-    forward_pass = cfg.forward_pass_gat
+    forward_pass = cfg.forward_pass
 
     # Split into train/test
     train_size = int(cfg.train_split * len(dataset))
@@ -86,8 +87,8 @@ def main():
         generator=torch.Generator().manual_seed(cfg.seed),
     )
 
-    train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=cfg.batch_size, shuffle=True)
+    train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True)  # type: ignore
+    test_loader = DataLoader(test_dataset, batch_size=cfg.batch_size, shuffle=True)  # type: ignore
 
     # Model setup
     model = cfg.model.to(device)

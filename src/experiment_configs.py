@@ -3,19 +3,16 @@ from typing import Callable
 
 import torch
 
-from dataloader_paired import (
-    CumulativeSoccerDataset,
-    SequentialSoccerDataset,
-    SoccerDataset,
-)
+from dataloader_paired import (GroupedSoccerDataset, SequentialSoccerDataset,
+                               SoccerDataset)
 from models.gat import SpatialModel
-from src.models.rnn import SimpleRNNModel
+from models.rnn import SimpleRNNModel
 
 
 @dataclass
 class ExperimentConfig:
     name: str
-    dataset: SoccerDataset
+    dataset_factory: Callable[[], SoccerDataset]
     batch_size: int
     lr: float
     num_epochs: int
@@ -25,60 +22,57 @@ class ExperimentConfig:
     ]
     train_split: float = 0.8
     seed = 42
+    _dataset: SoccerDataset | None = None
+
+    def get_dataset(self) -> SoccerDataset:
+        """Lazily instantiate the dataset on first access."""
+        if self._dataset is None:
+            print(f"Loading dataset for experiment '{self.name}'...")
+            self._dataset = self.dataset_factory()
+        return self._dataset
 
 
-def extract_global_features_alt(batch, batch_size, device):
-    home_batch = batch["home"].batch
-    away_batch = batch["away"].batch
+def forward_pass_rnn(batch, model, device, percentage_of_match=0.8):
 
-    x_norm_home = []
-    x_norm_away = []
+    feature_arr = []
+    y_arr = []
+    for match in batch:
+        stop = int(percentage_of_match * len(match))
+        feature_arr = []
 
-    for i in range(batch_size):
-        # Home
-        home_mask = home_batch == i
-        home_nodes = home_mask.sum()
+        for i in range(stop):
+            data = match[i]
+            home_nodes = data["home"].x.size()
+            away_nodes = data["away"].x.size()
+            home_unique_passes = data["home", "passes_to", "home"].edge_index.size()
+            away_unique_passes = data["away", "passes_to", "away"].edge_index.size()
+            home_total_passes = data["home", "passes_to", "home"].edge_weight.sum()
+            away_total_passes = data["away", "passes_to", "away"].edge_weight.sum()
 
-        # select edges belonging to this home graph
-        home_edge_index = batch["home", "passes_to", "home"].edge_index
-        src_edge_home = home_edge_index[0]
-        edge_mask_home = home_mask[src_edge_home]
-        home_unique_passes = edge_mask_home.sum()
-        home_total_passes = (
-            batch["home", "passes_to", "home"].edge_weight[edge_mask_home].sum()
-        )
+            # simple numeric features
+            features = torch.tensor(
+                [
+                    home_nodes,
+                    away_nodes,
+                    home_unique_passes,
+                    away_unique_passes,
+                    home_total_passes,
+                    away_total_passes,
+                ],
+                dtype=torch.float,
+                device=device,
+            )
+            feature_arr.append(features)
 
-        # Away
-        away_mask = away_batch == i
-        away_nodes = away_mask.sum()
+        features = torch.stack(feature_arr)
+        feature_arr.append(features)
+        y_arr.append(match.y)
 
-        away_edge_index = batch["away", "passes_to", "away"].edge_index
-        src_edge_away = away_edge_index[0]
-        edge_mask_away = away_mask[src_edge_away]
-        away_unique_passes = edge_mask_away.sum()
-        away_total_passes = (
-            batch["away", "passes_to", "away"].edge_weight[edge_mask_away].sum()
-        )
+    features = torch.stack(feature_arr)
+    y = torch.stack(y_arr)
 
-        home_features = torch.tensor(
-            [home_nodes, home_unique_passes, home_total_passes],
-            dtype=torch.float,
-            device=device,
-        )
-        away_features = torch.tensor(
-            [away_nodes, away_unique_passes, away_total_passes],
-            dtype=torch.float,
-            device=device,
-        )
-
-        x_norm_home.append(home_features)
-        x_norm_away.append(away_features)
-
-    return torch.stack(x_norm_home), torch.stack(x_norm_away)
-
-
-def forward_pass_rnn(batch, batch_size, device):
-    pass
+    out = model(features)
+    return out, y.reshape(-1, 3).argmax(dim=1)
 
 
 def extract_global_features(batch, batch_size, device):
@@ -175,7 +169,7 @@ def forward_pass_gat(batch, model, device):
 EXPERIMENTS = {
     "small": ExperimentConfig(
         name="small",
-        dataset=SequentialSoccerDataset(root="data", ending_year=2015),
+        dataset_factory=lambda: SequentialSoccerDataset(root="data", ending_year=2015),
         batch_size=16,
         lr=1e-3,
         num_epochs=1,
@@ -184,7 +178,7 @@ EXPERIMENTS = {
     ),
     "large": ExperimentConfig(
         name="large",
-        dataset=SequentialSoccerDataset(root="data"),
+        dataset_factory=lambda: SequentialSoccerDataset(root="data"),
         batch_size=64,
         lr=5e-4,
         num_epochs=20,
@@ -193,10 +187,10 @@ EXPERIMENTS = {
     ),
     "rnn": ExperimentConfig(
         name="rnn",
-        dataset=CumulativeSoccerDataset(root="data"),
+        dataset_factory=lambda: GroupedSoccerDataset(root="data"),
         batch_size=64,
         lr=5e-4,
-        num_epochs=20,
+        num_epochs=1,
         model=SimpleRNNModel(input_size=6, hidden_size=64, num_layers=1, output_size=3),
         forward_pass=forward_pass_rnn,
     ),

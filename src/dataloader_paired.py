@@ -6,7 +6,7 @@ from typing import List
 import numpy as np
 import pandas as pd
 import torch
-from torch_geometric.data import Data, Dataset, HeteroData
+from torch_geometric.data import Batch, Data, Dataset, HeteroData
 from tqdm import tqdm
 
 
@@ -426,7 +426,8 @@ class SequentialSoccerDataset(SoccerDataset):
 
     @property
     def processed_dir(self) -> str:
-        return Path(self.root).joinpath("processed_sequential").as_posix()
+        dir_name = f"processed_sequential_{self.starting_year}-{self.ending_year}-{self.time_interval}"
+        return Path(self.root).joinpath(dir_name).as_posix()
 
 
 class CumulativeSoccerDataset(SoccerDataset):
@@ -439,12 +440,77 @@ class CumulativeSoccerDataset(SoccerDataset):
 
     @property
     def processed_dir(self) -> str:
-        return Path(self.root).joinpath("processed_cumulative").as_posix()
+        dir_name = f"processed_cumulative_{self.starting_year}-{self.ending_year}-{self.time_interval}"
+        return Path(self.root).joinpath(dir_name).as_posix()
+
+
+class GroupedSoccerDataset(SequentialSoccerDataset):
+    """
+    Groups all timeframes per match together into one saved object.
+    Each entry in the dataset corresponds to a match.
+    """
+
+    def process(self):
+        idx = 0
+        for raw_path in tqdm(self.raw_paths, desc="Processing seasons"):
+            season_name = Path(raw_path).stem
+
+            with open(raw_path, "rb") as f:
+                season_data = pickle.load(f)
+
+            for match in tqdm(
+                season_data, desc=f"Matches from {season_name}", leave=False
+            ):
+                events = match["events"]
+                home_team = match["home_team"]
+                away_team = match["away_team"]
+                match_id = match.get("game_id", f"{season_name}_{idx}")
+
+                timeframes = self._process_match(events, home_team, away_team)
+
+                processed_timeframes = []
+                for hetero_data in timeframes:
+                    hetero_data.season = season_name
+                    hetero_data.match_id = match_id
+                    hetero_data.data_id = idx
+
+                    if self.pre_filter is not None and not self.pre_filter(hetero_data):
+                        continue
+                    if self.pre_transform is not None:
+                        hetero_data = self.pre_transform(hetero_data)
+                    processed_timeframes.append(hetero_data)
+
+                # Save the whole list together
+                torch.save(
+                    processed_timeframes, Path(self.processed_dir) / f"match_{idx}.pt"
+                )
+                idx += 1
+
+    @property
+    def processed_dir(self) -> str:
+        dir_name = f"processed_grouped_{self.starting_year}-{self.ending_year}-{self.time_interval}"
+        return Path(self.root).joinpath(dir_name).as_posix()
+
+    @property
+    def processed_file_names(self):
+        processed = list(Path(self.processed_dir).glob("match_*.pt"))
+        return [p.name for p in processed]
+
+    def get(self, idx) -> HeteroData:
+        """Returns all timeframes for a single match as a batched graph."""
+        file = Path(self.processed_dir) / f"match_{idx}.pt"
+        timeframes: list[HeteroData] = torch.load(file, weights_only=False)
+
+        # Batch them into one HeteroData object
+        batched = Batch.from_data_list(timeframes)
+        batched.match_id = timeframes[0].match_id
+        batched.season = timeframes[0].season
+        return batched
 
 
 def main():
     # Test the improved version
-    dataset = SequentialSoccerDataset(
+    dataset = GroupedSoccerDataset(
         root="data", starting_year=2015, ending_year=2016, time_interval=30
     )
     print(f"Dataset length: {len(dataset)}")
