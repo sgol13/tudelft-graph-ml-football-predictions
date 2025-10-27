@@ -283,7 +283,7 @@ def build_team_graphs_with_goals(
                     mean_x,
                     mean_y,
                     is_valid,
-                )  # FIXED: 3-tuple
+                )
 
             away_positions = current_cumulative_positions
 
