@@ -3,9 +3,6 @@ import torch
 import torch.nn.functional as F
 from torch.nn import ELU, RNN, Linear
 from torch_geometric.nn import GATConv, global_mean_pool
-from tqdm import tqdm
-
-from dataloader_paired import CumulativeSoccerDataset
 
 
 class Classifier(torch.nn.Module):
@@ -185,48 +182,3 @@ class DisjointModel(torch.nn.Module):
         rnn_outputs, x = self.rnn(outputs)
 
         x = self.classifier(x)
-
-
-def main():
-    dataset = CumulativeSoccerDataset(
-        root="data", starting_year=2015, ending_year=2016, time_interval=30
-    )
-    model = SpatialModel(input_size=1, L=0)
-
-    criterion = torch.nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=0)
-
-    model.train()
-    num_epochs = 100
-
-    for epoch in tqdm(range(num_epochs)):
-        epoch_loss = 0.0
-        for i in tqdm(range(200)):
-            data = dataset[i]
-            if data.home_x.size(0) == data.away_x.size(0):
-                batch = torch.zeros(
-                    data.home_x.size(0), dtype=torch.long, device=data.home_x.device
-                )
-                optimizer.zero_grad()
-                x = model(
-                    data.home_x,
-                    data.away_x,
-                    data.home_edge_index,
-                    data.away_edge_index,
-                    batch,
-                    None,
-                    None,
-                    None,
-                )
-
-                loss = criterion(x.squeeze(), data.final_result)
-                loss.backward()
-                optimizer.step()
-
-                epoch_loss += loss.item()
-
-        print(f"Epoch {epoch+1}/{num_epochs}, Loss: {epoch_loss / len(dataset):.4f}")
-
-
-if __name__ == "__main__":
-    main()

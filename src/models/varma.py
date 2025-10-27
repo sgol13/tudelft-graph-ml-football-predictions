@@ -24,7 +24,7 @@ class VARMABaseline(nn.Module):
     def forward(self, Y, e=None):
         # Y: tensor of shape [batch_size, seq_len, input_size]
         # e: residuals (same shape as Y)
-        
+
         batch_size, seq_len, input_size = Y.shape
 
         # Start with zeros
@@ -38,7 +38,7 @@ class VARMABaseline(nn.Module):
         for i in range(1, effective_p + 1):
             hidden += self.AR[i - 1](Y[:, -i, :])  # use last p steps
 
-        # MA component 
+        # MA component
         if e is not None and effective_q > 0:
             for j in range(1, effective_q + 1):
                 hidden += self.MA[j - 1](e[:, -j, :])
@@ -51,6 +51,7 @@ class VARMABaseline(nn.Module):
         out = self.softmax(out)
 
         return out
+
 
 model = VARMABaseline()
 print(model)

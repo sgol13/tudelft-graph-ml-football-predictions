@@ -3,16 +3,16 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import List
 
+import numpy as np
 import pandas as pd
 import torch
 from torch_geometric.data import Data, Dataset, HeteroData
 from tqdm import tqdm
-import numpy as np
 
 
 def count_passes(
     team_events: pd.DataFrame,
-) -> tuple[Counter[tuple[int, int]], dict[str,tuple[float,float, float]], list[str]]:
+) -> tuple[Counter[tuple[int, int]], dict[str, tuple[float, float, float]], list[str]]:
     """Count successful passes within a team over given events."""
     if team_events.empty:
         return Counter(), {}, []
@@ -22,7 +22,9 @@ def count_passes(
     players_pass_positions_x = {player: [] for player in team_players}
     players_pass_positions_y = {player: [] for player in team_players}
 
-    rows = team_events[["type", "outcome_type", "player", "x", "y", "end_x", "end_y"]].to_numpy()
+    rows = team_events[
+        ["type", "outcome_type", "player", "x", "y", "end_x", "end_y"]
+    ].to_numpy()
     passes = []
     pass_from = None
     receiving_x = None
@@ -41,7 +43,7 @@ def count_passes(
                 if receiving_x is not None and receiving_y is not None:
                     players_pass_positions_x[player].append(receiving_x)
                     players_pass_positions_y[player].append(receiving_y)
-                
+
         pass_from = player
         receiving_x = end_x
         receiving_y = end_y
@@ -51,16 +53,16 @@ def count_passes(
     for player in team_players:
         x_positions = players_pass_positions_x[player]
         y_positions = players_pass_positions_y[player]
-        
+
         if x_positions and y_positions:
             mean_x = np.mean(x_positions)
             mean_y = np.mean(y_positions)
-            is_valid = 1.0 # Valid position
+            is_valid = 1.0  # Valid position
         else:
-            mean_x, mean_y = 50.0, 50.0 # Midfield
+            mean_x, mean_y = 50.0, 50.0  # Midfield
             is_valid = 0.0  # Invalid/imputed position
-            
-        players_positions[player] = (mean_x, mean_y, is_valid)    
+
+        players_positions[player] = (mean_x, mean_y, is_valid)
 
     return pass_counts, players_positions, team_players.tolist()
 
@@ -109,7 +111,9 @@ def get_final_result(
     return home_goals, away_goals, result_tensor
 
 
-def build_graph(pass_counts: Counter, player_positions: dict, team_players: list) -> Data:
+def build_graph(
+    pass_counts: Counter, player_positions: dict, team_players: list
+) -> Data:
     """Build graph - handles empty pass cases gracefully."""
     if not pass_counts or len(team_players) == 0:
         # Handle empty case
@@ -118,13 +122,15 @@ def build_graph(pass_counts: Counter, player_positions: dict, team_players: list
         edge_weight = torch.zeros(0, dtype=torch.float)
     else:
         # Build edges
-        edge_index = torch.tensor(list(pass_counts.keys()), dtype=torch.long).t().contiguous()
+        edge_index = (
+            torch.tensor(list(pass_counts.keys()), dtype=torch.long).t().contiguous()
+        )
         edge_weight = torch.tensor(list(pass_counts.values()), dtype=torch.float)
-        
+
         # Enhanced node features: [player_id, position_x, position_y]
         x_list = []
         player_to_idx = {p: i for i, p in enumerate(team_players)}
-        
+
         for player in team_players:
             player_id = player_to_idx[player]
             if player in player_positions:
@@ -132,7 +138,7 @@ def build_graph(pass_counts: Counter, player_positions: dict, team_players: list
                 x_list.append([float(player_id), pos_x, pos_y, pos_valid])
             else:
                 x_list.append([float(player_id), 50.0, 50.0, 0.0])
-        
+
         x = torch.tensor(x_list, dtype=torch.float)
 
     return Data(x=x, edge_index=edge_index, edge_weight=edge_weight)
@@ -197,12 +203,16 @@ def build_team_graphs_with_goals(
                     cumulative_player_positions[home_team][player].append(position)
                 else:
                     cumulative_player_positions[home_team][player] = [position]
-            
+
             # Calculate MEAN of cumulative positions up to current interval
             current_cumulative_positions = {}
-            for player, positions_list in cumulative_player_positions[home_team].items():
+            for player, positions_list in cumulative_player_positions[
+                home_team
+            ].items():
                 if positions_list:
-                    valid_positions = [pos for pos in positions_list if pos[2] == 1.0]  # Only use valid ones
+                    valid_positions = [
+                        pos for pos in positions_list if pos[2] == 1.0
+                    ]  # Only use valid ones
                     if valid_positions:
                         mean_x = np.mean([pos[0] for pos in valid_positions])
                         mean_y = np.mean([pos[1] for pos in valid_positions])
@@ -213,9 +223,9 @@ def build_team_graphs_with_goals(
                 else:
                     mean_x, mean_y = 50.0, 50.0
                     is_valid = 0.0
-                
+
                 current_cumulative_positions[player] = (mean_x, mean_y, is_valid)
-            
+
             home_positions = current_cumulative_positions
 
         home_graph = build_graph(home_pass_counts, home_positions, home_players)
@@ -247,13 +257,17 @@ def build_team_graphs_with_goals(
                     cumulative_player_positions[away_team][player].append(position)
                 else:
                     cumulative_player_positions[away_team][player] = [position]
-            
+
             # Calculate MEAN of cumulative positions up to current interval
             current_cumulative_positions = {}
-            for player, positions_list in cumulative_player_positions[away_team].items():
+            for player, positions_list in cumulative_player_positions[
+                away_team
+            ].items():
                 if positions_list:
                     # Only average if we have valid positions
-                    valid_positions = [pos for pos in positions_list if pos[2] == 1.0]  # Only use valid ones
+                    valid_positions = [
+                        pos for pos in positions_list if pos[2] == 1.0
+                    ]  # Only use valid ones
                     if valid_positions:
                         mean_x = np.mean([pos[0] for pos in valid_positions])
                         mean_y = np.mean([pos[1] for pos in valid_positions])
@@ -264,9 +278,13 @@ def build_team_graphs_with_goals(
                 else:
                     mean_x, mean_y = 50.0, 50.0
                     is_valid = 0.0
-                
-                current_cumulative_positions[player] = (mean_x, mean_y, is_valid)  # FIXED: 3-tuple
-            
+
+                current_cumulative_positions[player] = (
+                    mean_x,
+                    mean_y,
+                    is_valid,
+                )  # FIXED: 3-tuple
+
             away_positions = current_cumulative_positions
 
         away_graph = build_graph(away_pass_counts, away_positions, away_players)
