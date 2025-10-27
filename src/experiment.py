@@ -8,6 +8,7 @@ from tqdm import tqdm
 
 from experiment_configs import EXPERIMENTS
 
+
 def train_one_epoch(model, dataloader, criterion, optimizer, device, forward_pass=None):
     model.train()
     total_loss = 0.0
@@ -80,7 +81,9 @@ def main():
     train_size = int(cfg.train_split * len(dataset))
     test_size = len(dataset) - train_size
     train_dataset, test_dataset = torch.utils.data.random_split(
-        dataset, [train_size, test_size], generator=torch.Generator().manual_seed(cfg.seed)
+        dataset,
+        [train_size, test_size],
+        generator=torch.Generator().manual_seed(cfg.seed),
     )
 
     train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True)
@@ -97,8 +100,12 @@ def main():
 
     best_acc = 0.0
     for _ in epoch_progress:
-        train_loss = train_one_epoch(model, train_loader, criterion, optimizer, device, forward_pass)
-        test_loss, test_acc = evaluate(model, test_loader, criterion, device, forward_pass)
+        train_loss = train_one_epoch(
+            model, train_loader, criterion, optimizer, device, forward_pass
+        )
+        test_loss, test_acc = evaluate(
+            model, test_loader, criterion, device, forward_pass
+        )
         best_acc = max(best_acc, test_acc)
 
         epoch_progress.set_postfix(
