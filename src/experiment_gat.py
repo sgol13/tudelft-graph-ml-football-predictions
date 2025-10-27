@@ -149,7 +149,7 @@ def main():
     print(f"Using device: {device}")
 
     # Dataset
-    dataset = SequentialSoccerDataset(root="../data")
+    dataset = SequentialSoccerDataset(root="data")
     print(f"Dataset size: {len(dataset)}")
 
     # Split into train/test
