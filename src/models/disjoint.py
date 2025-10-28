@@ -1,7 +1,8 @@
 import torch
 import torch.nn.functional as F
-from gat import GAT, Classifier
 from torch.nn import Linear
+
+from models.gat import GAT, Classifier
 
 
 class GoalPredictor(torch.nn.Module):
