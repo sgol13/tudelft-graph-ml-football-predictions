@@ -6,7 +6,7 @@ from typing import List
 import numpy as np
 import pandas as pd
 import torch
-from torch_geometric.data import Batch, Data, Dataset, HeteroData
+from torch_geometric.data import Data, Dataset, HeteroData
 from tqdm import tqdm
 
 
@@ -496,16 +496,10 @@ class GroupedSoccerDataset(SequentialSoccerDataset):
         processed = list(Path(self.processed_dir).glob("match_*.pt"))
         return [p.name for p in processed]
 
-    def get(self, idx) -> HeteroData:
-        """Returns all timeframes for a single match as a batched graph."""
+    def get(self, idx) -> list[HeteroData]:
+        """Returns all timeframes for a single match."""
         file = Path(self.processed_dir) / f"match_{idx}.pt"
-        timeframes: list[HeteroData] = torch.load(file, weights_only=False)
-
-        # Batch them into one HeteroData object
-        batched = Batch.from_data_list(timeframes)
-        batched.match_id = timeframes[0].match_id
-        batched.season = timeframes[0].season
-        return batched
+        return torch.load(file, weights_only=False)
 
 
 def main():
