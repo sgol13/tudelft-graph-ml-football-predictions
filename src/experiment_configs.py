@@ -8,6 +8,7 @@ from dataloader_paired import (SequentialSoccerDataset, SoccerDataset,
 from models.disjoint import DisjointModel
 from models.gat import SpatialModel
 from models.rnn import SimpleRNNModel
+from models.varma import VARMABaseline
 
 
 @dataclass
@@ -394,6 +395,15 @@ EXPERIMENTS = {
         lr=5e-4,
         num_epochs=20,
         model=SimpleRNNModel(input_size=6, hidden_size=64, num_layers=1, output_size=3),
+        forward_pass=forward_pass_rnn,
+    ),
+    "varma": ExperimentConfig(
+        name="varma",
+        dataset_factory=lambda: TemporalSoccerDataset(root="data"),
+        batch_size=16,
+        lr=5e-4,
+        num_epochs=20,
+        model=VARMABaseline(input_size=6, hidden_size=64, p=2, q=1, num_classes=3),
         forward_pass=forward_pass_rnn,
     ),
     "disjoint": ExperimentConfig(
