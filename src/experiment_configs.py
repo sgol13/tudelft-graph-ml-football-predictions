@@ -3,8 +3,8 @@ from typing import Callable
 
 import torch
 
-from dataloader_paired import (GroupedSoccerDataset, SequentialSoccerDataset,
-                               SoccerDataset)
+from dataloader_paired import (SequentialSoccerDataset, SoccerDataset,
+                               TemporalSoccerDataset)
 from models.gat import SpatialModel
 from models.rnn import SimpleRNNModel
 
@@ -27,25 +27,32 @@ class ExperimentConfig:
 
 def forward_pass_rnn(batch, model, device, percentage_of_match=0.8):
     """
-    batch is now a list of match sequences.
-    Each match sequence is a list of HeteroData objects.
+    batch: dict with keys 'sequences', 'labels', 'metadata'
+    sequences: list of HeteroData sequences (length = batch_size)
     """
-    all_features = []
-    all_labels = []
+    sequences = batch["sequences"]
+    labels = batch["labels"].to(device)
 
-    # match is a list of HeteroData
-    for match in batch:
+    all_features = []
+
+    for match_sequence in sequences:  # Iterate over matches in the batch
         match_features = []
-        stop = int(percentage_of_match * len(match))
+        stop = max(1, int(percentage_of_match * len(match_sequence)))
 
         for i in range(stop):
-            data = match[i]
+            data = match_sequence[i]
+
+            # Extract features
             home_nodes = data["home"].x.size(0)
             away_nodes = data["away"].x.size(0)
             home_unique_passes = data["home", "passes_to", "home"].edge_index.size(1)
             away_unique_passes = data["away", "passes_to", "away"].edge_index.size(1)
-            home_total_passes = data["home", "passes_to", "home"].edge_weight.sum()
-            away_total_passes = data["away", "passes_to", "away"].edge_weight.sum()
+            home_total_passes = (
+                data["home", "passes_to", "home"].edge_weight.sum().item()
+            )
+            away_total_passes = (
+                data["away", "passes_to", "away"].edge_weight.sum().item()
+            )
 
             features = torch.tensor(
                 [
@@ -62,15 +69,20 @@ def forward_pass_rnn(batch, model, device, percentage_of_match=0.8):
             match_features.append(features)
 
         # Stack features for this match: (seq_len, feature_dim)
-        match_features = torch.stack(match_features)
-        all_features.append(match_features)
+        if len(match_features) > 0:
+            match_features_tensor = torch.stack(match_features)
+            all_features.append(match_features_tensor)
 
-        # Get label from last timeframe
-        all_labels.append(match[0].y.argmax())
+    if len(all_features) == 0:
+        # Handle empty batch
+        return torch.zeros(0, 3, device=device), torch.zeros(
+            0, dtype=torch.long, device=device
+        )
 
     # Pad sequences to same length for batching
     max_len = max(f.size(0) for f in all_features)
     padded_features = []
+
     for f in all_features:
         if f.size(0) < max_len:
             padding = torch.zeros(max_len - f.size(0), f.size(1), device=device)
@@ -79,11 +91,12 @@ def forward_pass_rnn(batch, model, device, percentage_of_match=0.8):
 
     # Stack into batch: (batch_size, seq_len, feature_dim)
     features_batch = torch.stack(padded_features)
-    labels_batch = torch.tensor(all_labels, device=device)
 
     out = model(features_batch)
 
-    return out, labels_batch
+    y = labels.argmax(dim=1)
+
+    return out, y
 
 
 def extract_global_features(batch, batch_size, device):
@@ -199,7 +212,7 @@ EXPERIMENTS = {
     ),
     "rnn": ExperimentConfig(
         name="rnn",
-        dataset_factory=lambda: GroupedSoccerDataset(root="data"),
+        dataset_factory=lambda: TemporalSoccerDataset(root="data"),
         batch_size=16,
         lr=5e-4,
         num_epochs=20,

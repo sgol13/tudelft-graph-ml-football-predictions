@@ -4,21 +4,46 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch_geometric.loader import DataLoader
+from torch.utils.data import DataLoader
+from torch_geometric.loader import DataLoader as GeometricDataLoader
 from tqdm import tqdm
 
-from dataloader_paired import GroupedSoccerDataset
+from dataloader_paired import TemporalSoccerDataset
 from experiment_configs import EXPERIMENTS
 
 
-def collate_match_sequences(data_list):
+def collate_temporal_sequences(data_list):
     """
-    Collate function for grouped matches.
-    Each item in data_list is a list of HeteroData (one match).
-    Returns a list of batches, one per match.
+    Collate function for TemporalSequence objects.
+
+    Args:
+        data_list: list of TemporalSequence objects (length = batch_size)
+
+    Returns:
+        A batch dictionary containing:
+        - sequences: list of HeteroData sequences (one per match in batch)
+        - labels: tensor of shape (batch_size,) with match outcomes
+        - metadata: dict with additional info
     """
-    # Don't batch across matches - return list of individual match sequences
-    return data_list
+    # Extract sequences and labels
+    sequences = [seq.hetero_data_sequence for seq in data_list]
+    labels = torch.stack([seq.y for seq in data_list])
+
+    # Optional: extract metadata
+    metadata = {
+        "final_home_goals": torch.stack([seq.final_home_goals for seq in data_list]),
+        "final_away_goals": torch.stack([seq.final_away_goals for seq in data_list]),
+        "sequence_lengths": torch.tensor([seq.sequence_length for seq in data_list]),
+        "seasons": [seq.season for seq in data_list],
+        "match_ids": [seq.match_id for seq in data_list],
+        "indices": torch.tensor([seq.idx for seq in data_list]),
+    }
+
+    return {
+        "sequences": sequences,
+        "labels": labels,
+        "metadata": metadata,
+    }
 
 
 def train_one_epoch(model, dataloader, criterion, optimizer, device, forward_pass):
@@ -101,11 +126,12 @@ def main():
         generator=torch.Generator().manual_seed(cfg.seed),
     )
 
-    train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True)  # type: ignore
-    test_loader = DataLoader(test_dataset, batch_size=cfg.batch_size, shuffle=True)  # type: ignore
-    if type(dataset) is GroupedSoccerDataset:
-        train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_match_sequences)  # type: ignore
-        test_loader = DataLoader(test_dataset, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_match_sequences)  # type: ignore
+    train_loader = GeometricDataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True)  # type: ignore
+    test_loader = GeometricDataLoader(test_dataset, batch_size=cfg.batch_size, shuffle=True)  # type: ignore
+    if type(dataset) is TemporalSoccerDataset:
+        print("Using custom collate function")
+        train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_temporal_sequences)  # type: ignore
+        test_loader = DataLoader(test_dataset, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_temporal_sequences)  # type: ignore
 
     # Model setup
     model = cfg.model.to(device)
