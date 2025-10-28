@@ -1,7 +1,6 @@
-import numpy as np
 import torch
 import torch.nn.functional as F
-from torch.nn import ELU, RNN, Linear
+from torch.nn import ELU, Linear
 from torch_geometric.nn import GATConv, global_mean_pool
 
 
@@ -12,10 +11,22 @@ class Classifier(torch.nn.Module):
         self.lin2 = Linear(hidden_size, num_classes)
 
     def forward(self, x):
-        x = self.lin1(x)
+        x = F.relu(self.lin1(x))
         x = self.lin2(x)
 
         return x
+
+
+class GoalPredictor(torch.nn.Module):
+    def __init__(self, input_size=64, hidden_size=16, num_classes=1):
+        super().__init__()
+        self.lin1 = Linear(input_size, hidden_size)
+        self.lin2 = Linear(hidden_size, num_classes)
+
+    def forward(self, x):
+        x = F.relu(self.lin1(x))
+        x = self.lin2(x)
+        return torch.exp(x)
 
 
 class GAT(torch.nn.Module):
@@ -43,29 +54,28 @@ class GAT(torch.nn.Module):
     ):
         # 1. Obtain node embeddings
         x1 = self.elu(self.conv1(x1, edge_index1, edge_col1))
-        x1 = F.dropout(x1, p=0.5, training=self.training)
+        x1 = F.dropout(x1, p=0.2, training=self.training)
 
         x1 = self.elu(self.conv2(x1, edge_index1, edge_col1))
-        x1 = F.dropout(x1, p=0.5, training=self.training)
+        x1 = F.dropout(x1, p=0.2, training=self.training)
 
         x1 = self.elu(self.conv3(x1, edge_index1, edge_col1))
-        x1 = F.dropout(x1, p=0.5, training=self.training)
+        x1 = F.dropout(x1, p=0.2, training=self.training)
 
         x2 = self.elu(self.conv1(x2, edge_index2, edge_col2))
-        x2 = F.dropout(x2, p=0.5, training=self.training)
+        x2 = F.dropout(x2, p=0.2, training=self.training)
 
         x2 = self.elu(self.conv2(x2, edge_index2, edge_col2))
-        x2 = F.dropout(x2, p=0.5, training=self.training)
+        x2 = F.dropout(x2, p=0.2, training=self.training)
 
         x2 = self.elu(self.conv3(x2, edge_index2, edge_col2))
-        x2 = F.dropout(x2, p=0.5, training=self.training)
+        x2 = F.dropout(x2, p=0.2, training=self.training)
 
         # 2. Readout layer
         # Two batches since graphs don't necessarily have the same number of nodes
         x1 = global_mean_pool(x1, batch1)
         x2 = global_mean_pool(x2, batch2)
 
-        # Concatenate global features (x_norm2)
         if x_norm2_1 is not None:
             x1 = torch.cat((x1, x_norm2_1), dim=1)
         if x_norm2_2 is not None:
@@ -123,62 +133,111 @@ class SpatialModel(torch.nn.Module):
 class DisjointModel(torch.nn.Module):
     def __init__(
         self,
-        num_windows=5,
+        window_size=5,
         hidden_dim=32,
-        input_size=7,
+        input_size=4,  # [player_id, pos_x, pos_y, is_valid]
         N1=128,
         N2=128,
         N3=64,
         N4=64,
         N5=16,
-        L=16,
+        L=6,
         num_classes=3,
+        goal_information=False,
     ):
         super().__init__()
-        self.num_windows = num_windows
+        self.window_size = window_size
         self.N4 = N4
+        self.goal_information = goal_information
 
         self.gat = GAT(input_size, N1, N2, N3, N4, L)
-        self.rnn = RNN(
-            2 * N4, hidden_dim, batch_first=True
-        )  # Can change num_layers, dropout, nonlinearity
+        self.rnn = torch.nn.GRU(2 * N4, hidden_dim, batch_first=True)
         self.classifier = Classifier(hidden_dim, N5, num_classes)
+        if goal_information:
+            self.goal_home_predicter = GoalPredictor(hidden_dim, N5, 1)
+            self.goal_away_predicter = GoalPredictor(hidden_dim, N5, 1)
 
-    # All inputs are expected in shape (num_windows, L), with L being the original length of each parameter
     def forward(
         self,
         x1,
         x2,
         edge_index1,
         edge_index2,
+        edge_weight1,
+        edge_weight2,
         batch1,
         batch2,
         x_norm2_1,
         x_norm2_2,
-        edge_col1=None,
-        edge_col2=None,
+        batch_size,
+        window_size,
     ):
-        assert x1.shape[0] == self.num_windows
-        assert x2.shape[0] == self.num_windows
+        device = next(self.parameters()).device
 
-        outputs = np.zeros(shape=(1, self.num_windows, self.N4))
-        for i in range(self.num_windows):
-            this_edge_col1 = [edge_col1[i, :]] if edge_col1 is not None else None
-            this_edge_col2 = [edge_col2[i, :]] if edge_col2 is not None else None
-            x1, x2 = self.gat(
-                x1[i, :],
-                x2[i, :],
-                edge_index1[i, :],
-                edge_index2[i, :],
-                batch1[i, :],
-                batch2[i, :],
-                x_norm2_1[i, :],
-                x_norm2_2[i, :],
-                this_edge_col1,
-                this_edge_col2,
+        # outputs: [batch_size, window_size, 2 * N4]
+        outputs = torch.zeros(batch_size, window_size, 2 * self.N4, device=device)
+
+        # Process each timestep of all windows
+        for timestep_idx in range(window_size):
+            x1_t = x1[timestep_idx]  # [total_nodes_home, 4]
+            x2_t = x2[timestep_idx]  # [total_nodes_away, 4]
+            edge1_t = edge_index1[timestep_idx]  # [2, total_edges_home]
+            edge2_t = edge_index2[timestep_idx]  # [2, total_edges_away]
+            edgew1_t = edge_weight1[timestep_idx]  # [total_edges_home]
+            edgew2_t = edge_weight2[timestep_idx]  # [total_edges_away]
+            batch1_t = batch1[timestep_idx]  # [total_nodes_home]
+            batch2_t = batch2[timestep_idx]  # [total_nodes_away]
+
+            x_norm1_t = x_norm2_1[timestep_idx]  # [batch_size, 6]
+            x_norm2_t = x_norm2_2[timestep_idx]  # [batch_size, 6]
+
+            # Verificar NaN en inputs
+            if torch.isnan(x1_t).any() or torch.isnan(x_norm1_t).any():
+                print("⚠️ NaN detected in INPUTS!")
+                return torch.randn(
+                    batch_size, 3, device=device
+                )  # Return random outputs para continuar
+
+            x1_out, x2_out = self.gat(
+                x1_t,
+                x2_t,
+                edge1_t,
+                edge2_t,
+                batch1_t,
+                batch2_t,
+                x_norm1_t,
+                x_norm2_t,
+                edge_col1=edgew1_t,
+                edge_col2=edgew2_t,
             )
-            outputs[0, i, :] = torch.cat((x1, x2), dim=1)
 
-        rnn_outputs, x = self.rnn(outputs)
+            # Verify there are no NaNs in the outputs
+            if torch.isnan(x1_out).any() or torch.isnan(x2_out).any():
+                print("⚠️ NaN detected in GAT outputs!")
+                print(f"  x1_out: {x1_out}")
+                print(f"  x2_out: {x2_out}")
+                return torch.randn(batch_size, 3, device=device)
 
-        x = self.classifier(x)
+            combined = torch.cat([x1_out, x2_out], dim=-1)  # [batch_size, 2 * N4]
+            outputs[:, timestep_idx, :] = combined
+
+        # Verify there are no NaNs in the outputs
+        if torch.isnan(outputs).any():
+            print("⚠️ NaN detected in RNN outputs!")
+            return torch.randn(batch_size, 3, device=device)
+
+        _, hidden = self.rnn(outputs)
+
+        # Verify there are no NaNs in the hidden states
+        if torch.isnan(hidden).any():
+            print("⚠️ NaN detected in RNN hidden states!")
+            return torch.randn(batch_size, 3, device=device)
+
+        if self.goal_information:
+            return {
+                "class_logits": self.classifier(hidden[-1]),
+                "home_goals_pred": self.goal_home_predicter(hidden[-1]),
+                "away_goals_pred": self.goal_home_predicter(hidden[-1]),
+            }
+        else:
+            return self.classifier(hidden[-1])
