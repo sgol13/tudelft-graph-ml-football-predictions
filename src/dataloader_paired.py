@@ -377,16 +377,7 @@ def build_team_graphs_progressive(
 ) -> TemporalSequence:
     """Build paired graphs with both home and away teams for each time interval."""
     if events.empty or "minute" not in events.columns:
-        return TemporalSequence(
-            hetero_data_sequence=[],
-            y=torch.tensor([0, 0, 0], dtype=torch.float),  # Default result
-            final_home_goals=torch.tensor(0, dtype=torch.long),
-            final_away_goals=torch.tensor(0, dtype=torch.long),
-            sequence_length=0,
-            season="",
-            match_id="",
-            idx=0,
-        )
+        raise Exception("Faulty data entry")
 
     max_minute = events["minute"].max()
 
@@ -568,13 +559,6 @@ class TemporalSoccerDataset(SoccerDataset):
         return Path(self.root).joinpath(dir_name).as_posix()
 
     @property
-    def raw_file_names(self):
-        return [
-            f"epl_{year}.pkl"
-            for year in range(self.starting_year, self.ending_year + 1)
-        ]
-
-    @property
     def processed_file_names(self):
         processed = list(Path(self.processed_dir).glob("sequence_*.pt"))
         return [p.name for p in processed]
@@ -602,7 +586,12 @@ class TemporalSoccerDataset(SoccerDataset):
                 match_id = match.get("game_id", f"{season_name}_{idx}")
 
                 # Get entire temporal sequence for this match
-                temporal_sequence = self._process_match(events, home_team, away_team)
+                try:
+                    temporal_sequence = self._process_match(
+                        events, home_team, away_team
+                    )
+                except Exception:
+                    continue
 
                 # Add match metadata to the sequence
                 temporal_sequence.season = season_name
@@ -621,33 +610,9 @@ class TemporalSoccerDataset(SoccerDataset):
                 )
                 idx += 1
 
-    def len(self):
-        return len(self.processed_file_names)
-
-    def get(self, idx):
+    def get(self, idx) -> TemporalSequence:
         file = Path(self.processed_dir) / f"sequence_{idx}.pt"
         return torch.load(file, weights_only=False)
-
-    def get_season_indices(self, season_name: str) -> List[int]:
-        """Get indices for a specific season."""
-        return [idx for idx in range(len(self)) if self.get(idx).season == season_name]
-
-    def get_season_split(
-        self, train_seasons: List[str], val_seasons: List[str], test_seasons: List[str]
-    ):
-        """Split by season names."""
-        train_indices, val_indices, test_indices = [], [], []
-
-        for idx in range(len(self)):
-            season = self.get(idx).season
-            if season in train_seasons:
-                train_indices.append(idx)
-            elif season in val_seasons:
-                val_indices.append(idx)
-            elif season in test_seasons:
-                test_indices.append(idx)
-
-        return train_indices, val_indices, test_indices
 
 
 class SequentialSoccerDataset(SoccerDataset):
@@ -678,67 +643,9 @@ class CumulativeSoccerDataset(SoccerDataset):
         return Path(self.root).joinpath(dir_name).as_posix()
 
 
-class GroupedSoccerDataset(SequentialSoccerDataset):
-    """
-    Groups all timeframes per match together into one saved object.
-    Each entry in the dataset corresponds to a match.
-    """
-
-    def process(self):
-        idx = 0
-        for raw_path in tqdm(self.raw_paths, desc="Processing seasons"):
-            season_name = Path(raw_path).stem
-
-            with open(raw_path, "rb") as f:
-                season_data = pickle.load(f)
-
-            for match in tqdm(
-                season_data, desc=f"Matches from {season_name}", leave=False
-            ):
-                events = match["events"]
-                home_team = match["home_team"]
-                away_team = match["away_team"]
-                match_id = match.get("game_id", f"{season_name}_{idx}")
-
-                timeframes = self._process_match(events, home_team, away_team)
-
-                processed_timeframes = []
-                for hetero_data in timeframes:
-                    hetero_data.season = season_name
-                    hetero_data.match_id = match_id
-                    hetero_data.data_id = idx
-
-                    if self.pre_filter is not None and not self.pre_filter(hetero_data):
-                        continue
-                    if self.pre_transform is not None:
-                        hetero_data = self.pre_transform(hetero_data)
-                    processed_timeframes.append(hetero_data)
-
-                # Save the whole list together
-                torch.save(
-                    processed_timeframes, Path(self.processed_dir) / f"match_{idx}.pt"
-                )
-                idx += 1
-
-    @property
-    def processed_dir(self) -> str:
-        dir_name = f"processed_grouped_{self.starting_year}-{self.ending_year}-{self.time_interval}"
-        return Path(self.root).joinpath(dir_name).as_posix()
-
-    @property
-    def processed_file_names(self):
-        processed = list(Path(self.processed_dir).glob("match_*.pt"))
-        return [p.name for p in processed]
-
-    def get(self, idx) -> list[HeteroData]:
-        """Returns all timeframes for a single match."""
-        file = Path(self.processed_dir) / f"match_{idx}.pt"
-        return torch.load(file, weights_only=False)
-
-
 def main():
     # Test the improved version
-    dataset = GroupedSoccerDataset(
+    dataset = TemporalSoccerDataset(
         root="data", starting_year=2015, ending_year=2016, time_interval=30
     )
     print(f"Dataset length: {len(dataset)}")
