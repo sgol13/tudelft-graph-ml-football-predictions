@@ -24,7 +24,6 @@ class ExperimentConfig:
     ]
     train_split: float = 0.8
     seed = 42
-    _dataset: SoccerDataset | None = None
 
 
 def forward_pass_rnn(batch, model, device, percentage_of_match=0.8):
