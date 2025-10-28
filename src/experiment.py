@@ -1,4 +1,5 @@
 import argparse
+from pathlib import Path
 
 import torch
 import torch.nn as nn
@@ -72,6 +73,11 @@ def main():
         choices=EXPERIMENTS.keys(),
         help="Experiment configuration to run",
     )
+    parser.add_argument(
+        "--retrain-model",
+        action="store_true",
+        help="Whether you want to retrain an already trained model, if there is one. This will redo any training and overwrite the current saved model. Otherwise, the saved model will be used to evaluate.",
+    )
     args = parser.parse_args()
 
     cfg = EXPERIMENTS[args.exp]
@@ -104,33 +110,46 @@ def main():
     # Model setup
     model = cfg.model.to(device)
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+    model_dict_path = f"model_backups/{cfg.name}.pt"
+    should_load_model = (
+        not args.retrain_model and Path.cwd().joinpath(model_dict_path).exists()
+    )
+    if should_load_model:
+        model.load_state_dict(torch.load(model_dict_path))
 
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=cfg.lr)
 
-    epoch_progress = tqdm(range(cfg.num_epochs), desc="Epochs")
+    num_epochs = 1 if should_load_model else cfg.num_epochs
+    epoch_progress = tqdm(range(num_epochs), desc="Epochs")
 
     best_acc = 0.0
     for _ in epoch_progress:
-        train_loss = train_one_epoch(
-            model, train_loader, criterion, optimizer, device, forward_pass
-        )
+        train_loss = 0
+        if not should_load_model:
+            train_loss = train_one_epoch(
+                model, train_loader, criterion, optimizer, device, forward_pass
+            )
         test_loss, test_acc = evaluate(
             model, test_loader, criterion, device, forward_pass
         )
         best_acc = max(best_acc, test_acc)
+        postfix_text = {
+            "test_loss": f"{test_loss:.4f}",
+            "test_acc": f"{test_acc:.2%}",
+            "best_acc": f"{best_acc:.2%}",
+        }
+        if not should_load_model:
+            postfix_text["train_loss"] = f"{train_loss:.4f}"
 
-        epoch_progress.set_postfix(
-            {
-                "train_loss": f"{train_loss:.4f}",
-                "test_loss": f"{test_loss:.4f}",
-                "test_acc": f"{test_acc:.2%}",
-                "best_acc": f"{best_acc:.2%}",
-            }
-        )
+        epoch_progress.set_postfix()
 
     print("\nTraining finished!")
     print(f"Best test accuracy: {best_acc:.2%}")
+
+    if args.retrain_model or not Path.cwd().joinpath(model_dict_path).exists():
+        print("Saving model parameters...")
+        torch.save(model.state_dict(), model_dict_path)
 
 
 if __name__ == "__main__":
