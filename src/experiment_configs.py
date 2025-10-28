@@ -399,7 +399,7 @@ EXPERIMENTS = {
     "disjoint": ExperimentConfig(
         name="disjoint",
         dataset_factory=lambda: TemporalSoccerDataset(root="data"),
-        batch_size=16,
+        batch_size=8,
         lr=1e-3,
         num_epochs=20,
         model=DisjointModel(),
