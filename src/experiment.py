@@ -10,13 +10,22 @@ from dataloader_paired import GroupedSoccerDataset
 from experiment_configs import EXPERIMENTS
 
 
+def collate_match_sequences(data_list):
+    """
+    Collate function for grouped matches.
+    Each item in data_list is a list of HeteroData (one match).
+    Returns a list of batches, one per match.
+    """
+    # Don't batch across matches - return list of individual match sequences
+    return data_list
+
+
 def train_one_epoch(model, dataloader, criterion, optimizer, device, forward_pass):
     model.train()
     total_loss = 0.0
 
     progress = tqdm(dataloader, desc="Training", leave=False)
     for batch in progress:
-        batch = batch.to(device)
         optimizer.zero_grad()
 
         out, y = forward_pass(batch, model, device)
@@ -40,7 +49,6 @@ def evaluate(model, dataloader, criterion, device, forward_pass):
 
     progress = tqdm(dataloader, desc="Evaluating", leave=False)
     for batch in progress:
-        batch = batch.to(device)
 
         out, y = forward_pass(batch, model, device)
 
@@ -89,6 +97,9 @@ def main():
 
     train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True)  # type: ignore
     test_loader = DataLoader(test_dataset, batch_size=cfg.batch_size, shuffle=True)  # type: ignore
+    if type(dataset) is GroupedSoccerDataset:
+        train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_match_sequences)  # type: ignore
+        test_loader = DataLoader(test_dataset, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_match_sequences)  # type: ignore
 
     # Model setup
     model = cfg.model.to(device)
