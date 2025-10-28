@@ -1,5 +1,6 @@
 import pickle
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 
@@ -10,6 +11,18 @@ from torch_geometric.data import Data, Dataset, HeteroData
 from tqdm import tqdm
 
 
+@dataclass
+class TemporalSequence:
+    hetero_data_sequence: List[HeteroData]  # [t0, t1, t2, ...]
+    y: torch.Tensor  # Single label for entire sequence
+    final_home_goals: torch.Tensor
+    final_away_goals: torch.Tensor
+    sequence_length: int
+    season: str
+    match_id: str
+    idx: int
+
+
 def count_passes(
     team_events: pd.DataFrame,
 ) -> tuple[Counter[tuple[int, int]], dict[str, tuple[float, float, float]], list[str]]:
@@ -17,11 +30,27 @@ def count_passes(
     if team_events.empty:
         return Counter(), {}, []
 
-    team_players = team_events["player"].dropna().unique().astype(str)
+    pass_events = team_events[
+        (team_events["type"] == "Pass") & (team_events["outcome_type"] == "Successful")
+    ]
+
+    passing_players = set()
+    rows = pass_events[["player", "x", "y", "end_x", "end_y"]]
+
+    for player, x, y, end_x, end_y in rows:
+        if player is not None and player is not np.nan and pd.notna(player):
+            passing_players.add(str(player))
+
+    if not passing_players:
+        return Counter(), {}, []
+
+    team_players = sorted(list(passing_players))
     player_to_idx = {p: i for i, p in enumerate(team_players)}
+
     players_pass_positions_x = {player: [] for player in team_players}
     players_pass_positions_y = {player: [] for player in team_players}
 
+    # Procesar pases
     rows = team_events[
         ["type", "outcome_type", "player", "x", "y", "end_x", "end_y"]
     ].to_numpy()
@@ -32,17 +61,39 @@ def count_passes(
 
     for event_type, outcome_type, player, x, y, end_x, end_y in rows:
         if event_type == "Pass" and outcome_type == "Successful":
-            if player not in player_to_idx:
+
+            if (
+                player is None
+                or player is np.nan
+                or pd.isna(player)
+                or player not in player_to_idx
+            ):
                 continue
+
             if pass_from is not None and pass_from in player_to_idx:
                 passes.append((player_to_idx[pass_from], player_to_idx[player]))
-                if x is not None and y is not None:
-                    players_pass_positions_x[pass_from].append(x)
-                    players_pass_positions_y[pass_from].append(y)
 
-                if receiving_x is not None and receiving_y is not None:
-                    players_pass_positions_x[player].append(receiving_x)
-                    players_pass_positions_y[player].append(receiving_y)
+                if (
+                    x is not None
+                    and x is not np.nan
+                    and pd.notna(x)
+                    and y is not None
+                    and y is not np.nan
+                    and pd.notna(y)
+                ):
+                    players_pass_positions_x[pass_from].append(float(x))
+                    players_pass_positions_y[pass_from].append(float(y))
+
+                if (
+                    receiving_x is not None
+                    and receiving_x is not np.nan
+                    and pd.notna(receiving_x)
+                    and receiving_y is not None
+                    and receiving_y is not np.nan
+                    and pd.notna(receiving_y)
+                ):
+                    players_pass_positions_x[player].append(float(receiving_x))
+                    players_pass_positions_y[player].append(float(receiving_y))
 
         pass_from = player
         receiving_x = end_x
@@ -50,6 +101,7 @@ def count_passes(
 
     pass_counts = Counter(passes)
     players_positions = {}
+
     for player in team_players:
         x_positions = players_pass_positions_x[player]
         y_positions = players_pass_positions_y[player]
@@ -57,14 +109,14 @@ def count_passes(
         if x_positions and y_positions:
             mean_x = np.mean(x_positions)
             mean_y = np.mean(y_positions)
-            is_valid = 1.0  # Valid position
+            is_valid = 1.0
         else:
-            mean_x, mean_y = 50.0, 50.0  # Midfield
-            is_valid = 0.0  # Invalid/imputed position
+            mean_x, mean_y = 50.0, 50.0
+            is_valid = 0.0
 
         players_positions[player] = (mean_x, mean_y, is_valid)
 
-    return pass_counts, players_positions, team_players.tolist()
+    return pass_counts, players_positions, team_players
 
 
 def count_goals(
@@ -159,6 +211,7 @@ def build_team_graphs_with_goals(
     )
 
     paired_graphs = []
+
     cumulative_pass_counts = defaultdict(Counter)
     cumulative_team_players = defaultdict(set)
     cumulative_player_positions = defaultdict(lambda: defaultdict(list))
@@ -279,11 +332,7 @@ def build_team_graphs_with_goals(
                     mean_x, mean_y = 50.0, 50.0
                     is_valid = 0.0
 
-                current_cumulative_positions[player] = (
-                    mean_x,
-                    mean_y,
-                    is_valid,
-                )
+                current_cumulative_positions[player] = (mean_x, mean_y, is_valid)
 
             away_positions = current_cumulative_positions
 
@@ -322,6 +371,99 @@ def build_team_graphs_with_goals(
     return paired_graphs
 
 
+def build_team_graphs_progressive(
+    events, home_team: str, away_team: str, time_interval=5
+) -> TemporalSequence:
+    """Build paired graphs with both home and away teams for each time interval."""
+    if events.empty or "minute" not in events.columns:
+        return TemporalSequence(
+            hetero_data_sequence=[],
+            y=torch.tensor([0, 0, 0], dtype=torch.float),  # Default result
+            final_home_goals=torch.tensor(0, dtype=torch.long),
+            final_away_goals=torch.tensor(0, dtype=torch.long),
+            sequence_length=0,
+            season="",
+            match_id="",
+            idx=0,
+        )
+
+    max_minute = events["minute"].max()
+
+    # Get final result with one-hot encoding
+    final_home_goals, final_away_goals, final_result_onehot = get_final_result(
+        events, home_team, away_team
+    )
+
+    paired_graphs = []
+
+    # Iterate over time intervals
+    for start_minute in range(0, int(max_minute), time_interval):
+        end_minute = min(start_minute + time_interval, int(max_minute) + 1)
+        events_in_interval = events[
+            (events["minute"] >= start_minute)
+            & (events["minute"] < end_minute)
+            & (~events["type"].isin(["Start", "End", "FormationSet"]))
+        ]
+
+        # Count goals up to current interval
+        current_home_goals, current_away_goals = count_goals(
+            events, end_minute, home_team, away_team
+        )
+
+        # Process HOME team
+        home_events = events_in_interval[events_in_interval["team"] == home_team]
+        home_pass_counts, home_positions, home_players = count_passes(home_events)
+
+        home_graph = build_graph(home_pass_counts, home_positions, home_players)
+
+        # Process AWAY team
+        away_events = events_in_interval[events_in_interval["team"] == away_team]
+        away_pass_counts, away_positions, away_players = count_passes(away_events)
+
+        away_graph = build_graph(away_pass_counts, away_positions, away_players)
+
+        # Create HeteroData with separate node types for home/away
+        hetero_data = HeteroData()
+
+        # Home team graph
+        hetero_data["home"].x = home_graph.x
+        hetero_data["home", "passes_to", "home"].edge_index = home_graph.edge_index
+        hetero_data["home", "passes_to", "home"].edge_weight = home_graph.edge_weight
+
+        # Away team graph
+        hetero_data["away"].x = away_graph.x
+        hetero_data["away", "passes_to", "away"].edge_index = away_graph.edge_index
+        hetero_data["away", "passes_to", "away"].edge_weight = away_graph.edge_weight
+
+        # Metadata (stored as attributes on the HeteroData object)
+        hetero_data.start_minute = torch.tensor(start_minute, dtype=torch.long)
+        hetero_data.end_minute = torch.tensor(end_minute, dtype=torch.long)
+        hetero_data.current_home_goals = torch.tensor(
+            current_home_goals, dtype=torch.long
+        )
+        hetero_data.current_away_goals = torch.tensor(
+            current_away_goals, dtype=torch.long
+        )
+
+        hetero_data.home_team = home_team
+        hetero_data.away_team = away_team
+
+        paired_graphs.append(hetero_data)
+
+    match_data = TemporalSequence(
+        hetero_data_sequence=paired_graphs,
+        y=final_result_onehot,
+        final_home_goals=torch.tensor(final_home_goals, dtype=torch.long),
+        final_away_goals=torch.tensor(final_away_goals, dtype=torch.long),
+        sequence_length=len(paired_graphs),
+        season="",
+        match_id="",
+        idx=0,
+    )
+
+    return match_data
+
+
 class SoccerDataset(Dataset):
     def __init__(
         self,
@@ -351,7 +493,7 @@ class SoccerDataset(Dataset):
 
     def _process_match(
         self, events: pd.DataFrame, home_team: str, away_team: str
-    ) -> List[HeteroData]:
+    ) -> List[HeteroData] | TemporalSequence:
         raise NotImplementedError()
 
     def process(self):
@@ -373,6 +515,8 @@ class SoccerDataset(Dataset):
 
                 paired_graphs = self._process_match(events, home_team, away_team)
 
+                assert type(paired_graphs) is list[HeteroData]
+
                 for hetero_data in paired_graphs:
                     # Add metadata as attributes directly on HeteroData
                     hetero_data.season = season_name
@@ -392,6 +536,95 @@ class SoccerDataset(Dataset):
 
     def get(self, idx):
         file = Path(self.processed_dir) / f"data_{idx}.pt"
+        return torch.load(file, weights_only=False)
+
+    def get_season_indices(self, season_name: str) -> List[int]:
+        """Get indices for a specific season."""
+        return [idx for idx in range(len(self)) if self.get(idx).season == season_name]
+
+    def get_season_split(
+        self, train_seasons: List[str], val_seasons: List[str], test_seasons: List[str]
+    ):
+        """Split by season names."""
+        train_indices, val_indices, test_indices = [], [], []
+
+        for idx in range(len(self)):
+            season = self.get(idx).season
+            if season in train_seasons:
+                train_indices.append(idx)
+            elif season in val_seasons:
+                val_indices.append(idx)
+            elif season in test_seasons:
+                test_indices.append(idx)
+
+        return train_indices, val_indices, test_indices
+
+
+class TemporalSoccerDataset(SoccerDataset):
+    @property
+    def processed_dir(self):
+        dir_name = f"processed_temporal_{self.starting_year}-{self.ending_year}-{self.time_interval}"
+        return Path(self.root).joinpath(dir_name).as_posix()
+
+    @property
+    def raw_file_names(self):
+        return [
+            f"epl_{year}.pkl"
+            for year in range(self.starting_year, self.ending_year + 1)
+        ]
+
+    @property
+    def processed_file_names(self):
+        processed = list(Path(self.processed_dir).glob("sequence_*.pt"))
+        return [p.name for p in processed]
+
+    def _process_match(
+        self, events: pd.DataFrame, home_team: str, away_team: str
+    ) -> TemporalSequence:
+        return build_team_graphs_progressive(
+            events, home_team, away_team, self.time_interval
+        )
+
+    def process(self):
+        idx = 0
+        for raw_path in tqdm(self.raw_paths, desc="Processing seasons"):
+            season_name = Path(raw_path).stem
+            with open(raw_path, "rb") as f:
+                season_data = pickle.load(f)
+
+            for match in tqdm(
+                season_data, desc=f"Matches from {season_name}", leave=False
+            ):
+                events = match["events"]
+                home_team = match["home_team"]
+                away_team = match["away_team"]
+                match_id = match.get("game_id", f"{season_name}_{idx}")
+
+                # Get entire temporal sequence for this match
+                temporal_sequence = self._process_match(events, home_team, away_team)
+
+                # Add match metadata to the sequence
+                temporal_sequence.season = season_name
+                temporal_sequence.match_id = match_id
+                temporal_sequence.idx = idx
+
+                if self.pre_filter is not None and not self.pre_filter(
+                    temporal_sequence
+                ):
+                    continue
+                if self.pre_transform is not None:
+                    temporal_sequence = self.pre_transform(temporal_sequence)
+
+                torch.save(
+                    temporal_sequence, Path(self.processed_dir) / f"sequence_{idx}.pt"
+                )
+                idx += 1
+
+    def len(self):
+        return len(self.processed_file_names)
+
+    def get(self, idx):
+        file = Path(self.processed_dir) / f"sequence_{idx}.pt"
         return torch.load(file, weights_only=False)
 
     def get_season_indices(self, season_name: str) -> List[int]:
