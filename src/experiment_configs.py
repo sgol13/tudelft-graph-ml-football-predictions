@@ -24,32 +24,29 @@ class ExperimentConfig:
     seed = 42
     _dataset: SoccerDataset | None = None
 
-    def get_dataset(self) -> SoccerDataset:
-        """Lazily instantiate the dataset on first access."""
-        if self._dataset is None:
-            print(f"Loading dataset for experiment '{self.name}'...")
-            self._dataset = self.dataset_factory()
-        return self._dataset
-
 
 def forward_pass_rnn(batch, model, device, percentage_of_match=0.8):
+    """
+    batch is now a list of match sequences.
+    Each match sequence is a list of HeteroData objects.
+    """
+    all_features = []
+    all_labels = []
 
-    feature_arr = []
-    y_arr = []
+    # match is a list of HeteroData
     for match in batch:
+        match_features = []
         stop = int(percentage_of_match * len(match))
-        feature_arr = []
 
         for i in range(stop):
             data = match[i]
-            home_nodes = data["home"].x.size()
-            away_nodes = data["away"].x.size()
-            home_unique_passes = data["home", "passes_to", "home"].edge_index.size()
-            away_unique_passes = data["away", "passes_to", "away"].edge_index.size()
+            home_nodes = data["home"].x.size(0)
+            away_nodes = data["away"].x.size(0)
+            home_unique_passes = data["home", "passes_to", "home"].edge_index.size(1)
+            away_unique_passes = data["away", "passes_to", "away"].edge_index.size(1)
             home_total_passes = data["home", "passes_to", "home"].edge_weight.sum()
             away_total_passes = data["away", "passes_to", "away"].edge_weight.sum()
 
-            # simple numeric features
             features = torch.tensor(
                 [
                     home_nodes,
@@ -62,17 +59,31 @@ def forward_pass_rnn(batch, model, device, percentage_of_match=0.8):
                 dtype=torch.float,
                 device=device,
             )
-            feature_arr.append(features)
+            match_features.append(features)
 
-        features = torch.stack(feature_arr)
-        feature_arr.append(features)
-        y_arr.append(match.y)
+        # Stack features for this match: (seq_len, feature_dim)
+        match_features = torch.stack(match_features)
+        all_features.append(match_features)
 
-    features = torch.stack(feature_arr)
-    y = torch.stack(y_arr)
+        # Get label from last timeframe
+        all_labels.append(match[0].y.argmax())
 
-    out = model(features)
-    return out, y.reshape(-1, 3).argmax(dim=1)
+    # Pad sequences to same length for batching
+    max_len = max(f.size(0) for f in all_features)
+    padded_features = []
+    for f in all_features:
+        if f.size(0) < max_len:
+            padding = torch.zeros(max_len - f.size(0), f.size(1), device=device)
+            f = torch.cat([f, padding], dim=0)
+        padded_features.append(f)
+
+    # Stack into batch: (batch_size, seq_len, feature_dim)
+    features_batch = torch.stack(padded_features)
+    labels_batch = torch.tensor(all_labels, device=device)
+
+    out = model(features_batch)
+
+    return out, labels_batch
 
 
 def extract_global_features(batch, batch_size, device):
@@ -123,6 +134,7 @@ def extract_global_features(batch, batch_size, device):
 
 
 def forward_pass_gat(batch, model, device):
+    batch = batch.to(device)
     # Extract data from HeteroData structure
     x1 = batch["home"].x
     x2 = batch["away"].x
@@ -188,9 +200,9 @@ EXPERIMENTS = {
     "rnn": ExperimentConfig(
         name="rnn",
         dataset_factory=lambda: GroupedSoccerDataset(root="data"),
-        batch_size=64,
+        batch_size=16,
         lr=5e-4,
-        num_epochs=1,
+        num_epochs=20,
         model=SimpleRNNModel(input_size=6, hidden_size=64, num_layers=1, output_size=3),
         forward_pass=forward_pass_rnn,
     ),
