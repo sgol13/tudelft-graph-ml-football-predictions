@@ -33,9 +33,10 @@ def count_passes(
     pass_events = team_events[
         (team_events["type"] == "Pass") & (team_events["outcome_type"] == "Successful")
     ]
+    assert type(pass_events) is pd.DataFrame
 
     passing_players = set()
-    rows = pass_events[["player", "x", "y", "end_x", "end_y"]]
+    rows = pass_events[["player", "x", "y", "end_x", "end_y"]].to_numpy()
 
     for player, x, y, end_x, end_y in rows:
         if player is not None and player is not np.nan and pd.notna(player):
