@@ -1,5 +1,5 @@
 .idea/
 .vscode/
-data/*
+src/data/*
 .python-version
 **/__pycache__/**
