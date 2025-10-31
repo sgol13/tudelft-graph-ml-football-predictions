@@ -14,6 +14,7 @@ import random
 from dataloader_paired import TemporalSoccerDataset
 from experiment_configs import EXPERIMENTS, HYPERPARAMETERS
 from saving_results import make_run_dir, save_checkpoint, load_checkpoint, plot_training_curves
+from result_metrics import evaluate_rps, evaluate_across_time
 
 
 def group_indices_by_match(dataset):
@@ -238,7 +239,9 @@ def main():
         print(f"Run directory: {run_dir}")
     else:
         ###WHAT WE WANT TO DO, STUDIES
-        print("Lacking this code!!!!!!!!!!!!")
+        evaluate_rps(model, test_loader, device, forward_pass)
+        evaluate_across_time(model, test_loader, device, forward_pass)
+        
 
 if __name__ == "__main__":
     main()
