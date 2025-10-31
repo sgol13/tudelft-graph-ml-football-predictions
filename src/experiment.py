@@ -1,5 +1,6 @@
 import argparse
 from pathlib import Path
+import os
 
 import torch
 import torch.nn as nn
@@ -7,9 +8,11 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch_geometric.loader import DataLoader as GeometricDataLoader
 from tqdm import tqdm
+import json
 
 from dataloader_paired import TemporalSoccerDataset
-from experiment_configs import EXPERIMENTS
+from experiment_configs import EXPERIMENTS, HYPERPARAMETERS
+from saving_results import make_run_dir, save_checkpoint, load_checkpoint, plot_training_curves
 
 
 def collate_temporal_sequences(data_list):
@@ -49,21 +52,27 @@ def collate_temporal_sequences(data_list):
 def train_one_epoch(model, dataloader, criterion, optimizer, device, forward_pass):
     model.train()
     total_loss = 0.0
+    correct = 0
+    total = 0
 
     progress = tqdm(dataloader, desc="Training", leave=False)
     for batch in progress:
         optimizer.zero_grad()
 
-        out, y = forward_pass(batch, model, device)
+        out, y, home_goals, away_goals = forward_pass(batch, model, device)
 
-        loss = criterion(out, y)
+        loss = criterion(out, y, home_goals, away_goals)
         loss.backward()
         optimizer.step()
 
         total_loss += loss.item()
+        preds = out["class_logits"].argmax(dim=1)
+        correct += (preds == y).sum().item()
+        total += y.size(0)
         progress.set_postfix(loss=f"{loss.item():.4f}")
 
-    return total_loss / len(dataloader)
+    accuracy = 100 * correct / total if total > 0 else 0
+    return total_loss / len(dataloader), accuracy
 
 
 @torch.no_grad()
@@ -76,16 +85,16 @@ def evaluate(model, dataloader, criterion, device, forward_pass):
     progress = tqdm(dataloader, desc="Evaluating", leave=False)
     for batch in progress:
 
-        out, y = forward_pass(batch, model, device)
+        out, y, home_goals, away_goals = forward_pass(batch, model, device)
 
-        loss = criterion(out, y)
+        loss = criterion(out, y, home_goals, away_goals)
         total_loss += loss.item()
 
-        preds = out.argmax(dim=1)
+        preds = out["class_logits"].argmax(dim=1)
         correct += (preds == y).sum().item()
         total += y.size(0)
 
-    accuracy = correct / total if total > 0 else 0
+    accuracy = 100 * correct / total if total > 0 else 0
     return total_loss / len(dataloader), accuracy
 
 
@@ -106,6 +115,7 @@ def main():
     args = parser.parse_args()
 
     cfg = EXPERIMENTS[args.exp]
+    hyp = HYPERPARAMETERS
     print(f"Running experiment: {cfg.name}")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -126,57 +136,71 @@ def main():
         generator=torch.Generator().manual_seed(cfg.seed),
     )
 
-    train_loader = GeometricDataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True)  # type: ignore
-    test_loader = GeometricDataLoader(test_dataset, batch_size=cfg.batch_size, shuffle=True)  # type: ignore
+    train_loader = GeometricDataLoader(train_dataset, batch_size=hyp.batch_size, shuffle=True)  # type: ignore
+    test_loader = GeometricDataLoader(test_dataset, batch_size=hyp.batch_size, shuffle=True)  # type: ignore
     if type(dataset) is TemporalSoccerDataset:
         print("Using custom collate function")
-        train_loader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_temporal_sequences)  # type: ignore
-        test_loader = DataLoader(test_dataset, batch_size=cfg.batch_size, shuffle=True, collate_fn=collate_temporal_sequences)  # type: ignore
+        train_loader = DataLoader(train_dataset, batch_size=hyp.batch_size, shuffle=True, collate_fn=collate_temporal_sequences)  # type: ignore
+        test_loader = DataLoader(test_dataset, batch_size=hyp.batch_size, shuffle=True, collate_fn=collate_temporal_sequences)  # type: ignore
 
     # Model setup
     model = cfg.model.to(device)
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
-    model_dict_path = f"model_backups/{cfg.name}.pt"
+
+    run_dir, exists = make_run_dir(cfg, hyp)
+    print(f"Run directory: {run_dir}")
+    
     should_load_model = (
-        not args.retrain_model and Path.cwd().joinpath(model_dict_path).exists()
+        not args.retrain_model and exists
     )
-    if should_load_model:
-        model.load_state_dict(torch.load(model_dict_path))
 
-    criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(model.parameters(), lr=cfg.lr)
+    criterion = cfg.criterion
+    optimizer = optim.Adam(model.parameters(), lr=hyp.learning_rate, weight_decay=hyp.weight_decay)
 
-    num_epochs = 1 if should_load_model else cfg.num_epochs
-    epoch_progress = tqdm(range(num_epochs), desc="Epochs")
+    num_epochs = hyp.num_epochs
+    start_epoch, best_acc, best_val_loss, history = load_checkpoint(model, optimizer, run_dir)
 
-    best_acc = 0.0
-    for _ in epoch_progress:
-        train_loss = 0
-        if not should_load_model:
-            train_loss = train_one_epoch(
-                model, train_loader, criterion, optimizer, device, forward_pass
-            )
-        test_loss, test_acc = evaluate(
-            model, test_loader, criterion, device, forward_pass
-        )
-        best_acc = max(best_acc, test_acc)
-        postfix_text = {
-            "test_loss": f"{test_loss:.4f}",
-            "test_acc": f"{test_acc:.2%}",
-            "best_acc": f"{best_acc:.2%}",
-        }
-        if not should_load_model:
-            postfix_text["train_loss"] = f"{train_loss:.4f}"
+    early_stopping_counter = 0
 
-        epoch_progress.set_postfix()
+    # === TRAINING LOOP ===================================================
+    if not should_load_model:
+        for epoch in range(start_epoch, num_epochs):
+            print(f"\nEpoch {epoch+1}/{num_epochs}")
 
-    print("\nTraining finished!")
-    print(f"Best test accuracy: {best_acc:.2%}")
 
-    if args.retrain_model or not Path.cwd().joinpath(model_dict_path).exists():
-        print("Saving model parameters...")
-        torch.save(model.state_dict(), model_dict_path)
+            train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device, forward_pass)
+            test_loss, test_acc = evaluate(model, test_loader, criterion, device, forward_pass)
 
+            history["train_loss"].append(train_loss)
+            history["test_loss"].append(test_loss)
+            history["train_acc"].append(train_acc)
+            history["test_acc"].append(test_acc)
+
+            if test_loss < best_val_loss:
+                best_val_loss = test_loss
+                early_stopping_counter = 0
+                torch.save(model.state_dict(), os.path.join(run_dir, "best_model.pth"))
+                print(f"🏆 New best model saved (val_loss={test_loss:.4f})")
+            else:
+                early_stopping_counter += 1
+                print(f"No improvement for {early_stopping_counter}/{hyp.patience} epochs")
+
+            save_checkpoint(model, optimizer, epoch, best_acc, best_val_loss, history, run_dir)
+
+            print(f"Train Loss: {train_loss:.4f}, Val Loss: {test_loss:.4f}, "
+                f"Train Acc: {train_acc:.2f}%, Val Acc: {test_acc:.2f}%")
+
+            if early_stopping_counter >= hyp.patience:
+                print("🛑 Early stopping triggered.")
+                break
+            plot_training_curves(history, run_dir)
+
+        print("\n✅ Training complete!")
+        print(f"Best validation loss: {best_val_loss:.4f}")
+        print(f"Run directory: {run_dir}")
+    else:
+        ###WHAT WE WANT TO DO
+        print("Lacking this code!!!!!!!!!!!!")
 
 if __name__ == "__main__":
     main()

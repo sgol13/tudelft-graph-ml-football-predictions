@@ -3,7 +3,7 @@ import torch.nn as nn
 
 
 class VARMABaseline(nn.Module):
-    def __init__(self, input_size=6, hidden_size=64, p=2, q=1, num_classes=3):
+    def __init__(self, input_size=6, hidden_size=64, p=2, q=1, num_classes=3, goal_information=False):
         super(VARMABaseline, self).__init__()
 
         self.p = p
@@ -18,7 +18,13 @@ class VARMABaseline(nn.Module):
 
         # Combine to output
         self.fc_out = nn.Linear(hidden_size, num_classes)
-        self.softmax = nn.Softmax(dim=1)
+
+        if goal_information:
+            self.goal_home_predicter = nn.Linear(hidden_size, 1)
+            self.goal_away_predicter = nn.Linear(hidden_size, 1)
+        self.goal_information = goal_information
+
+
 
     def forward(self, Y, e=None):
         # Y: tensor of shape [batch_size, seq_len, input_size]
@@ -45,12 +51,12 @@ class VARMABaseline(nn.Module):
         # Nonlinearity
         hidden = torch.tanh(hidden)
 
-        # Output probabilities
-        out = self.fc_out(hidden)
-        out = self.softmax(out)
-
-        return out
-
-
-model = VARMABaseline()
-print(model)
+        # Output 
+        if self.goal_information:
+            return {
+                "class_logits": self.fc_out(hidden),
+                "home_goals_pred": self.goal_home_predicter(hidden),
+                "away_goals_pred": self.goal_away_predicter(hidden),
+            }
+        else: 
+            return {"class_logits": self.fc_out(hidden)} # [batch, output_size]

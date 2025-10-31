@@ -507,7 +507,7 @@ class SoccerDataset(Dataset):
 
                 paired_graphs = self._process_match(events, home_team, away_team)
 
-                assert type(paired_graphs) is list[HeteroData]
+                # assert type(paired_graphs) is List[HeteroData]
 
                 for hetero_data in paired_graphs:
                     # Add metadata as attributes directly on HeteroData
@@ -645,7 +645,7 @@ class CumulativeSoccerDataset(SoccerDataset):
 
 def main():
     # Test the improved version
-    dataset = TemporalSoccerDataset(
+    dataset = SequentialSoccerDataset(
         root="data", starting_year=2015, ending_year=2016, time_interval=30
     )
     print(f"Dataset length: {len(dataset)}")

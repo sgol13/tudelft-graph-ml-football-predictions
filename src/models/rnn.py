@@ -3,7 +3,7 @@ import torch.nn as nn
 
 
 class SimpleRNNModel(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, output_size):
+    def __init__(self, input_size, hidden_size, num_layers, output_size, goal_information):
         super(SimpleRNNModel, self).__init__()
 
         self.hidden_size = hidden_size
@@ -17,6 +17,10 @@ class SimpleRNNModel(nn.Module):
         )
 
         self.fc = nn.Linear(hidden_size, output_size)
+        if goal_information:
+            self.goal_home_predicter = nn.Linear(hidden_size, 1)
+            self.goal_away_predicter = nn.Linear(hidden_size, 1)
+        self.goal_information = goal_information
 
     def forward(self, x):
         """
@@ -29,6 +33,11 @@ class SimpleRNNModel(nn.Module):
         out, hn = self.rnn(x, h0)  # out: [batch, seq_len, hidden_size]
 
         out = out[:, -1, :]  # [batch, hidden_size]
-        out = self.fc(out)  # [batch, output_size]
-
-        return out
+        if self.goal_information:
+            return {
+                "class_logits": self.fc(out),
+                "home_goals_pred": self.goal_home_predicter(out),
+                "away_goals_pred": self.goal_away_predicter(out),
+            }
+        else: 
+            return {"class_logits": self.fc(out)}# [batch, output_size]
