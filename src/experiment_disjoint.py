@@ -303,7 +303,6 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device):
     avg_loss = total_loss / len(dataloader)
     return avg_loss, total_samples, total_correct, acc
 
-
 @torch.no_grad()
 def evaluate(model, dataloader, criterion, device):
     model.eval()
