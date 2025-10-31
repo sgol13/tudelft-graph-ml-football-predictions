@@ -4,6 +4,18 @@ from torch.nn import ELU, Linear
 from torch_geometric.nn import GATConv, global_mean_pool
 
 
+class GoalPredictor(torch.nn.Module):
+    def __init__(self, input_size=64, hidden_size=16, num_classes=1):
+        super().__init__()
+        self.lin1 = Linear(input_size, hidden_size)
+        self.lin2 = Linear(hidden_size, num_classes)
+
+    def forward(self, x):
+        x = F.relu(self.lin1(x))
+        x = self.lin2(x)
+        return torch.exp(x)
+
+
 class Classifier(torch.nn.Module):
     def __init__(self, input_size=64, hidden_size=16, num_classes=3):
         super().__init__()
@@ -77,12 +89,16 @@ class GAT(torch.nn.Module):
 
 class SpatialModel(torch.nn.Module):
     def __init__(
-        self, input_size=7, N1=128, N2=128, N3=64, N4=64, N5=16, L=16, num_classes=3
+        self, input_size=7, N1=128, N2=128, N3=64, N4=64, N5=16, L=16, num_classes=3, goal_information=False
     ):
         super().__init__()
         self.gat = GAT(input_size, N1, N2, N3, N4, L)
         # After GAT, each graph has dimension N4, and we concatenate two graphs
         self.classifier = Classifier(2 * N4, N5, num_classes)
+        if goal_information:
+            self.goal_home_predicter = GoalPredictor(2 * N4, N5, 1)
+            self.goal_away_predicter = GoalPredictor(2 * N4, N5, 1)
+        self.goal_information = goal_information
 
     def forward(
         self,
@@ -112,5 +128,11 @@ class SpatialModel(torch.nn.Module):
         x = torch.cat((x1, x2), dim=1)  # x has both graph embeddings
         # For the Disjoint Model, we want this x as output of each GAT
 
-        x = self.classifier(x)
-        return x
+        if self.goal_information:
+            return {
+                "class_logits": self.classifier(x),
+                "home_goals_pred": self.goal_home_predicter(x),
+                "away_goals_pred": self.goal_away_predicter(x),
+            }
+        else:
+            return {"class_logits": self.classifier(x)}

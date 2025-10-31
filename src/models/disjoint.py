@@ -2,19 +2,7 @@ import torch
 import torch.nn.functional as F
 from torch.nn import Linear
 
-from models.gat import GAT, Classifier
-
-
-class GoalPredictor(torch.nn.Module):
-    def __init__(self, input_size=64, hidden_size=16, num_classes=1):
-        super().__init__()
-        self.lin1 = Linear(input_size, hidden_size)
-        self.lin2 = Linear(hidden_size, num_classes)
-
-    def forward(self, x):
-        x = F.relu(self.lin1(x))
-        x = self.lin2(x)
-        return torch.exp(x)
+from models.gat import GAT, Classifier, GoalPredictor
 
 
 # 1 GAT Shared across all windows or 1 GAT per window?
@@ -22,7 +10,6 @@ class GoalPredictor(torch.nn.Module):
 class DisjointModel(torch.nn.Module):
     def __init__(
         self,
-        window_size=5,
         hidden_dim=32,
         input_size=4,  # [player_id, pos_x, pos_y, is_valid]
         N1=128,
@@ -35,7 +22,6 @@ class DisjointModel(torch.nn.Module):
         goal_information=False,
     ):
         super().__init__()
-        self.window_size = window_size
         self.N4 = N4
         self.goal_information = goal_information
 
@@ -126,7 +112,7 @@ class DisjointModel(torch.nn.Module):
             return {
                 "class_logits": self.classifier(hidden[-1]),
                 "home_goals_pred": self.goal_home_predicter(hidden[-1]),
-                "away_goals_pred": self.goal_home_predicter(hidden[-1]),
+                "away_goals_pred": self.goal_away_predicter(hidden[-1]),
             }
         else:
-            return self.classifier(hidden[-1])
+            return {"class_logits" : self.classifier(hidden[-1])}
