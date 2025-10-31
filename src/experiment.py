@@ -8,11 +8,42 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch_geometric.loader import DataLoader as GeometricDataLoader
 from tqdm import tqdm
-import json
+from collections import defaultdict
+import random
 
 from dataloader_paired import TemporalSoccerDataset
 from experiment_configs import EXPERIMENTS, HYPERPARAMETERS
 from saving_results import make_run_dir, save_checkpoint, load_checkpoint, plot_training_curves
+
+
+def group_indices_by_match(dataset):
+    match_to_indices = defaultdict(list)
+    for idx in range(len(dataset)):
+        match_id = dataset.get(idx).match_id
+        match_to_indices[match_id].append(idx)
+    return match_to_indices
+
+def split_by_match(dataset, train_ratio=0.7, seed=42):
+    val_ratio = 1 - train_ratio/2
+    random.seed(seed)
+    match_to_indices = group_indices_by_match(dataset)
+
+    all_matches = list(match_to_indices.keys())
+    random.shuffle(all_matches)
+
+    n_total = len(all_matches)
+    n_train = int(train_ratio * n_total)
+    n_val = int(val_ratio * n_total)
+
+    train_matches = all_matches[:n_train]
+    val_matches = all_matches[n_train:n_train + n_val]
+    test_matches = all_matches[n_train + n_val:]
+
+    train_indices = [i for m in train_matches for i in match_to_indices[m]]
+    val_indices   = [i for m in val_matches for i in match_to_indices[m]]
+    test_indices  = [i for m in test_matches for i in match_to_indices[m]]
+
+    return train_indices, val_indices, test_indices
 
 
 def collate_temporal_sequences(data_list):
@@ -128,20 +159,27 @@ def main():
     forward_pass = cfg.forward_pass
 
     # Split into train/test
-    train_size = int(cfg.train_split * len(dataset))
-    test_size = len(dataset) - train_size
-    train_dataset, test_dataset = torch.utils.data.random_split(
-        dataset,
-        [train_size, test_size],
-        generator=torch.Generator().manual_seed(cfg.seed),
-    )
+    # train_size = int(cfg.train_split * len(dataset))
+    # test_size = len(dataset) - train_size
+    # train_dataset, test_dataset = torch.utils.data.random_split(
+    #     dataset,
+    #     [train_size, test_size],
+    #     generator=torch.Generator().manual_seed(cfg.seed),
+    # )
+
+    train_idx, val_idx, test_idx = split_by_match(dataset, train_ratio=cfg.train_split, seed=cfg.seed)
+
+    train_dataset = torch.utils.data.Subset(dataset, train_idx)
+    val_dataset = torch.utils.data.Subset(dataset, val_idx)
+    test_dataset = torch.utils.data.Subset(dataset, test_idx)
+
 
     train_loader = GeometricDataLoader(train_dataset, batch_size=hyp.batch_size, shuffle=True)  # type: ignore
-    test_loader = GeometricDataLoader(test_dataset, batch_size=hyp.batch_size, shuffle=True)  # type: ignore
+    test_loader = GeometricDataLoader(val_dataset, batch_size=hyp.batch_size, shuffle=True)  # type: ignore
     if type(dataset) is TemporalSoccerDataset:
         print("Using custom collate function")
         train_loader = DataLoader(train_dataset, batch_size=hyp.batch_size, shuffle=True, collate_fn=collate_temporal_sequences)  # type: ignore
-        test_loader = DataLoader(test_dataset, batch_size=hyp.batch_size, shuffle=True, collate_fn=collate_temporal_sequences)  # type: ignore
+        test_loader = DataLoader(val_dataset, batch_size=hyp.batch_size, shuffle=True, collate_fn=collate_temporal_sequences)  # type: ignore
 
     # Model setup
     model = cfg.model.to(device)
@@ -199,8 +237,9 @@ def main():
         print(f"Best validation loss: {best_val_loss:.4f}")
         print(f"Run directory: {run_dir}")
     else:
-        ###WHAT WE WANT TO DO
+        ###WHAT WE WANT TO DO, STUDIES
         print("Lacking this code!!!!!!!!!!!!")
 
 if __name__ == "__main__":
     main()
+
