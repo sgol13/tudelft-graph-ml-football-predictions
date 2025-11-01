@@ -243,137 +243,19 @@ def forward_pass_gat(batch, model, device):
     return out, labels_y, labels_home_goals, labels_away_goals
 
 
-# def forward_pass_disjoint(batch, model, device, percentage_of_match=0.8):
-#     """
-#     batch: dict with keys 'sequences', 'labels', 'metadata'
-#     sequences: list of HeteroData sequences (length = batch_size)
-
-#     The DisjointModel expects:
-#     - x1, x2: lists of node features per timestep [window_size] each containing [total_nodes, 4]
-#     - edge_index1, edge_index2: lists of edge indices per timestep
-#     - edge_weight1, edge_weight2: lists of edge weights per timestep
-#     - batch1, batch2: lists of batch assignments per timestep
-#     - x_norm2_1, x_norm2_2: lists of global features per timestep [window_size] each containing [batch_size, 6]
-#     - batch_size, window_size: integers
-#     """
-#     sequences = batch["sequences"]
-#     labels_y = batch["labels"].to(device).argmax(dim=1)
-#     labels_home_goals = batch["metadata"]["final_home_goals"].to(device)
-#     labels_away_goals = batch["metadata"]["final_away_goals"].to(device)
-#     batch_size = len(sequences)
-
-#     # Determine window size (number of timeframes to use)
-#     window_size = max(1, int(percentage_of_match * len(sequences[0])))
-
-#     # Initialize lists to hold data for each timestep
-#     x1_list = []
-#     x2_list = []
-#     edge_index1_list = []
-#     edge_index2_list = []
-#     edge_weight1_list = []
-#     edge_weight2_list = []
-#     batch1_list = []
-#     batch2_list = []
-#     x_norm2_1_list = []
-#     x_norm2_2_list = []
-
-#     # Process each timestep across all matches
-#     for timestep in range(window_size):
-#         # Collect data from all matches at this timestep
-#         timestep_x1 = []
-#         timestep_x2 = []
-#         timestep_edge_index1 = []
-#         timestep_edge_index2 = []
-#         timestep_edge_weight1 = []
-#         timestep_edge_weight2 = []
-#         timestep_batch1 = []
-#         timestep_batch2 = []
-#         timestep_global_home = []
-#         timestep_global_away = []
-
-#         home_node_offset = 0
-#         away_node_offset = 0
-
-#         for match_idx, match_sequence in enumerate(sequences):
-#             # Get data for this match at this timestep
-#             if timestep < len(match_sequence):
-#                 data = match_sequence[timestep]
-#             else:
-#                 # If this match is shorter, use the last timeframe (padding)
-#                 data = match_sequence[-1]
-
-#             # Extract node features
-#             home_nodes = data["home"].x.to(device)
-#             away_nodes = data["away"].x.to(device)
-
-#             # Extract edge information
-#             home_edge_index = data["home", "passes_to", "home"].edge_index.to(device)
-#             away_edge_index = data["away", "passes_to", "away"].edge_index.to(device)
-#             home_edge_weight = data["home", "passes_to", "home"].edge_weight.to(device)
-#             away_edge_weight = data["away", "passes_to", "away"].edge_weight.to(device)
-
-#             # Adjust edge indices for batching (add offset)
-#             home_edge_index_adjusted = home_edge_index + home_node_offset
-#             away_edge_index_adjusted = away_edge_index + away_node_offset
-
-#             # Create batch assignments
-#             home_batch = torch.full(
-#                 (home_nodes.size(0),), match_idx, dtype=torch.long, device=device
-#             )
-#             away_batch = torch.full(
-#                 (away_nodes.size(0),), match_idx, dtype=torch.long, device=device
-#             )
-
-#             # Extract global features
-#             home_feat, away_feat = extract_global_feature_from_match(data, device)
-
-#             # Append to timestep lists
-#             timestep_x1.append(home_nodes)
-#             timestep_x2.append(away_nodes)
-#             timestep_edge_index1.append(home_edge_index_adjusted)
-#             timestep_edge_index2.append(away_edge_index_adjusted)
-#             timestep_edge_weight1.append(home_edge_weight)
-#             timestep_edge_weight2.append(away_edge_weight)
-#             timestep_batch1.append(home_batch)
-#             timestep_batch2.append(away_batch)
-#             timestep_global_home.append(home_feat)
-#             timestep_global_away.append(away_feat)
-
-#             # Update offsets for next match
-#             home_node_offset += home_nodes.size(0)
-#             away_node_offset += away_nodes.size(0)
-
-#         # Concatenate all matches for this timestep
-#         x1_list.append(torch.cat(timestep_x1, dim=0))
-#         x2_list.append(torch.cat(timestep_x2, dim=0))
-#         edge_index1_list.append(torch.cat(timestep_edge_index1, dim=1))
-#         edge_index2_list.append(torch.cat(timestep_edge_index2, dim=1))
-#         edge_weight1_list.append(torch.cat(timestep_edge_weight1, dim=0))
-#         edge_weight2_list.append(torch.cat(timestep_edge_weight2, dim=0))
-#         batch1_list.append(torch.cat(timestep_batch1, dim=0))
-#         batch2_list.append(torch.cat(timestep_batch2, dim=0))
-#         x_norm2_1_list.append(torch.stack(timestep_global_home, dim=0))
-#         x_norm2_2_list.append(torch.stack(timestep_global_away, dim=0))
-
-#     # Forward pass through model
-#     out = model(
-#         x1=x1_list,
-#         x2=x2_list,
-#         edge_index1=edge_index1_list,
-#         edge_index2=edge_index2_list,
-#         edge_weight1=edge_weight1_list,
-#         edge_weight2=edge_weight2_list,
-#         batch1=batch1_list,
-#         batch2=batch2_list,
-#         x_norm2_1=x_norm2_1_list,
-#         x_norm2_2=x_norm2_2_list,
-#         batch_size=batch_size,
-#         window_size=window_size,
-#     )
-
-#     return out, labels_y, labels_home_goals, labels_away_goals
-
 def forward_pass_disjoint(batch, model, device, percentage_of_match=0.8):
+    """
+    batch: dict with keys 'sequences', 'labels', 'metadata'
+    sequences: list of HeteroData sequences (length = batch_size)
+
+    The DisjointModel expects:
+    - x1, x2: lists of node features per timestep [window_size] each containing [total_nodes, 4]
+    - edge_index1, edge_index2: lists of edge indices per timestep
+    - edge_weight1, edge_weight2: lists of edge weights per timestep
+    - batch1, batch2: lists of batch assignments per timestep
+    - x_norm2_1, x_norm2_2: lists of global features per timestep [window_size] each containing [batch_size, 6]
+    - batch_size, window_size: integers
+    """
     sequences = batch["sequences"]
     labels_y = batch["labels"].to(device).argmax(dim=1)
     labels_home_goals = batch["metadata"]["final_home_goals"].to(device)
