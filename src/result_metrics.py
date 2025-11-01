@@ -42,46 +42,42 @@ def evaluate_rps(model, dataloader, device, forward_pass):
 
 
 @torch.no_grad()
-def evaluate_across_time(model, dataloader, device, forward_pass):
+def evaluate_across_time(model, dataloader, device, forward_pass, run_dir):
     model.eval()
+    correct_by_minute = {}
+    total_by_minute = {}
 
-    correct_by_time = {}
-    total_by_time = {}
-
-    progress = tqdm(dataloader, desc="Evaluating", leave=False)
+    progress = tqdm(dataloader, desc="Evaluating across time", leave=False)
     for batch in progress:
-        # Forward pass
         out, y, _, _ = forward_pass(batch, model, device)
         preds = out["class_logits"].argmax(dim=1)
 
-        # Extraemos todos los end_minutes de este batch
-        end_minutes = batch["sequences"][-1].end_minute
+        # 🔹 obtener end_minute directamente del batch
+        end_minutes = [
+            seq[-1].end_minute.item()
+            for seq in batch["sequences"]
+        ]
 
-        # Aseguramos que esté en CPU y tipo lista
-        if torch.is_tensor(end_minutes):
-            end_minutes = end_minutes.cpu().tolist()
+        for pred, label, end_min in zip(preds, y, end_minutes):
+            end_min = int(end_min)
+            correct_by_minute[end_min] = correct_by_minute.get(end_min, 0) + (pred == label).item()
+            total_by_minute[end_min] = total_by_minute.get(end_min, 0) + 1
 
-        # Recorremos cada muestra dentro del batch
-        for minute, pred, label in zip(end_minutes, preds, y):
-            minute = int(minute)
+    # calcular accuracy por minuto
+    accuracy_by_minute = {
+        m: 100 * correct_by_minute[m] / total_by_minute[m]
+        for m in sorted(total_by_minute.keys())
+    }
 
-            if minute not in correct_by_time:
-                correct_by_time[minute] = 0
-                total_by_time[minute] = 0
 
-            correct_by_time[minute] += int(pred == label)
-            total_by_time[minute] += 1
 
-    # Calcular accuracies
-    times = sorted(correct_by_time.keys())
-    accuracies = [correct_by_time[t] / total_by_time[t] for t in times]
+    plt.plot(list(accuracy_by_minute.keys()), list(accuracy_by_minute.values()), marker="o")
+    plt.xlabel("End minute")
+    plt.ylabel("Accuracy (%)")
+    plt.title("Accuracy vs Time Frame")
+    plt.savefig(f"{run_dir}/accuracy_across_time.png")
 
-    plt.plot(times, accuracies, marker='o')
-    plt.xlabel("Minute")
-    plt.ylabel("Accuracy")
-    plt.title("Accuracy vs Time")
-    plt.grid(True)
-    plt.show()
+    return accuracy_by_minute
 
-    return times, accuracies
+
 

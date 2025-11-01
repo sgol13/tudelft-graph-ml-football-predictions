@@ -240,7 +240,7 @@ def main():
     else:
         ###WHAT WE WANT TO DO, STUDIES
         evaluate_rps(model, test_loader, device, forward_pass)
-        evaluate_across_time(model, test_loader, device, forward_pass)
+        evaluate_across_time(model, test_loader, device, forward_pass, run_dir)
         
 
 if __name__ == "__main__":

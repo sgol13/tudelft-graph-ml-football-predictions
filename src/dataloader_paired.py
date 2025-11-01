@@ -372,21 +372,102 @@ def build_team_graphs_with_goals(
     return paired_graphs
 
 
+# def build_team_graphs_progressive(
+#     events, home_team: str, away_team: str, time_interval=5
+# ) -> TemporalSequence:
+#     """Build paired graphs with both home and away teams for each time interval."""
+#     if events.empty or "minute" not in events.columns:
+#         raise Exception("Faulty data entry")
+
+#     max_minute = events["minute"].max()
+
+#     # Get final result with one-hot encoding
+#     final_home_goals, final_away_goals, final_result_onehot = get_final_result(
+#         events, home_team, away_team
+#     )
+
+#     paired_graphs = []
+
+#     # Iterate over time intervals
+#     for start_minute in range(0, int(max_minute), time_interval):
+#         end_minute = min(start_minute + time_interval, int(max_minute) + 1)
+#         events_in_interval = events[
+#             (events["minute"] >= start_minute)
+#             & (events["minute"] < end_minute)
+#             & (~events["type"].isin(["Start", "End", "FormationSet"]))
+#         ]
+
+#         # Count goals up to current interval
+#         current_home_goals, current_away_goals = count_goals(
+#             events, end_minute, home_team, away_team
+#         )
+
+#         # Process HOME team
+#         home_events = events_in_interval[events_in_interval["team"] == home_team]
+#         home_pass_counts, home_positions, home_players = count_passes(home_events)
+
+#         home_graph = build_graph(home_pass_counts, home_positions, home_players)
+
+#         # Process AWAY team
+#         away_events = events_in_interval[events_in_interval["team"] == away_team]
+#         away_pass_counts, away_positions, away_players = count_passes(away_events)
+
+#         away_graph = build_graph(away_pass_counts, away_positions, away_players)
+
+#         # Create HeteroData with separate node types for home/away
+#         hetero_data = HeteroData()
+
+#         # Home team graph
+#         hetero_data["home"].x = home_graph.x
+#         hetero_data["home", "passes_to", "home"].edge_index = home_graph.edge_index
+#         hetero_data["home", "passes_to", "home"].edge_weight = home_graph.edge_weight
+
+#         # Away team graph
+#         hetero_data["away"].x = away_graph.x
+#         hetero_data["away", "passes_to", "away"].edge_index = away_graph.edge_index
+#         hetero_data["away", "passes_to", "away"].edge_weight = away_graph.edge_weight
+
+#         # Metadata (stored as attributes on the HeteroData object)
+#         hetero_data.start_minute = torch.tensor(start_minute, dtype=torch.long)
+#         hetero_data.end_minute = torch.tensor(end_minute, dtype=torch.long)
+#         hetero_data.current_home_goals = torch.tensor(
+#             current_home_goals, dtype=torch.long
+#         )
+#         hetero_data.current_away_goals = torch.tensor(
+#             current_away_goals, dtype=torch.long
+#         )
+
+#         hetero_data.home_team = home_team
+#         hetero_data.away_team = away_team
+
+#         paired_graphs.append(hetero_data)
+
+#     match_data = TemporalSequence(
+#         hetero_data_sequence=paired_graphs,
+#         y=final_result_onehot,
+#         final_home_goals=torch.tensor(final_home_goals, dtype=torch.long),
+#         final_away_goals=torch.tensor(final_away_goals, dtype=torch.long),
+#         sequence_length=len(paired_graphs),
+#         season="",
+#         match_id="",
+#         idx=0,
+#     )
+
+#     return match_data
+
 def build_team_graphs_progressive(
     events, home_team: str, away_team: str, time_interval=5
-) -> TemporalSequence:
+) -> List[TemporalSequence]:
     """Build paired graphs with both home and away teams for each time interval."""
     if events.empty or "minute" not in events.columns:
         raise Exception("Faulty data entry")
 
     max_minute = events["minute"].max()
-
-    # Get final result with one-hot encoding
     final_home_goals, final_away_goals, final_result_onehot = get_final_result(
         events, home_team, away_team
     )
 
-    paired_graphs = []
+    sequences = []
 
     # Iterate over time intervals
     for start_minute in range(0, int(max_minute), time_interval):
@@ -397,63 +478,52 @@ def build_team_graphs_progressive(
             & (~events["type"].isin(["Start", "End", "FormationSet"]))
         ]
 
-        # Count goals up to current interval
         current_home_goals, current_away_goals = count_goals(
             events, end_minute, home_team, away_team
         )
 
-        # Process HOME team
+        # Build home graph
         home_events = events_in_interval[events_in_interval["team"] == home_team]
         home_pass_counts, home_positions, home_players = count_passes(home_events)
-
         home_graph = build_graph(home_pass_counts, home_positions, home_players)
 
-        # Process AWAY team
+        # Build away graph
         away_events = events_in_interval[events_in_interval["team"] == away_team]
         away_pass_counts, away_positions, away_players = count_passes(away_events)
-
         away_graph = build_graph(away_pass_counts, away_positions, away_players)
 
-        # Create HeteroData with separate node types for home/away
+        # Build HeteroData
         hetero_data = HeteroData()
-
-        # Home team graph
         hetero_data["home"].x = home_graph.x
         hetero_data["home", "passes_to", "home"].edge_index = home_graph.edge_index
         hetero_data["home", "passes_to", "home"].edge_weight = home_graph.edge_weight
 
-        # Away team graph
         hetero_data["away"].x = away_graph.x
         hetero_data["away", "passes_to", "away"].edge_index = away_graph.edge_index
         hetero_data["away", "passes_to", "away"].edge_weight = away_graph.edge_weight
 
-        # Metadata (stored as attributes on the HeteroData object)
+        # Add metadata
         hetero_data.start_minute = torch.tensor(start_minute, dtype=torch.long)
         hetero_data.end_minute = torch.tensor(end_minute, dtype=torch.long)
-        hetero_data.current_home_goals = torch.tensor(
-            current_home_goals, dtype=torch.long
-        )
-        hetero_data.current_away_goals = torch.tensor(
-            current_away_goals, dtype=torch.long
-        )
-
+        hetero_data.current_home_goals = torch.tensor(current_home_goals, dtype=torch.long)
+        hetero_data.current_away_goals = torch.tensor(current_away_goals, dtype=torch.long)
         hetero_data.home_team = home_team
         hetero_data.away_team = away_team
 
-        paired_graphs.append(hetero_data)
+        # Create TemporalSequence with **just this interval**
+        sequence = TemporalSequence(
+            hetero_data_sequence=[hetero_data],  # single timestep
+            y=final_result_onehot,
+            final_home_goals=torch.tensor(final_home_goals, dtype=torch.long),
+            final_away_goals=torch.tensor(final_away_goals, dtype=torch.long),
+            sequence_length=1,  # only this interval
+            season="",
+            match_id="",
+            idx=0,
+        )
+        sequences.append(sequence)
 
-    match_data = TemporalSequence(
-        hetero_data_sequence=paired_graphs,
-        y=final_result_onehot,
-        final_home_goals=torch.tensor(final_home_goals, dtype=torch.long),
-        final_away_goals=torch.tensor(final_away_goals, dtype=torch.long),
-        sequence_length=len(paired_graphs),
-        season="",
-        match_id="",
-        idx=0,
-    )
-
-    return match_data
+    return sequences
 
 
 class SoccerDataset(Dataset):
@@ -593,22 +663,35 @@ class TemporalSoccerDataset(SoccerDataset):
                 except Exception:
                     continue
 
-                # Add match metadata to the sequence
-                temporal_sequence.season = season_name
-                temporal_sequence.match_id = match_id
-                temporal_sequence.idx = idx
+                # # Add match metadata to the sequence
+                # temporal_sequence.season = season_name
+                # temporal_sequence.match_id = match_id
+                # temporal_sequence.idx = idx
 
-                if self.pre_filter is not None and not self.pre_filter(
-                    temporal_sequence
-                ):
-                    continue
-                if self.pre_transform is not None:
-                    temporal_sequence = self.pre_transform(temporal_sequence)
+                # if self.pre_filter is not None and not self.pre_filter(
+                #     temporal_sequence
+                # ):
+                #     continue
+                # if self.pre_transform is not None:
+                #     temporal_sequence = self.pre_transform(temporal_sequence)
 
-                torch.save(
-                    temporal_sequence, Path(self.processed_dir) / f"sequence_{idx}.pt"
-                )
-                idx += 1
+                # torch.save(
+                #     temporal_sequence, Path(self.processed_dir) / f"sequence_{idx}.pt"
+                # )
+                # idx += 1
+
+                for sequence in temporal_sequence:
+                    sequence.season = season_name
+                    sequence.match_id = match_id
+                    sequence.idx = idx
+
+                    if self.pre_filter and not self.pre_filter(sequence):
+                        continue
+                    if self.pre_transform:
+                        sequence = self.pre_transform(sequence)
+
+                    torch.save(sequence, Path(self.processed_dir) / f"sequence_{idx}.pt")
+                    idx += 1
 
     def get(self, idx) -> TemporalSequence:
         file = Path(self.processed_dir) / f"sequence_{idx}.pt"
