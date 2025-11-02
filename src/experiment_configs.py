@@ -1,9 +1,10 @@
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Dict
 
 import torch
 
-from dataloader_paired import (SequentialSoccerDataset, SoccerDataset,
+from criterion import build_criterion
+from dataloader_paired import (CumulativeSoccerDataset, SoccerDataset,
                                TemporalSoccerDataset)
 from models.disjoint import DisjointModel
 from models.gat import SpatialModel
@@ -15,15 +16,32 @@ from models.varma import VARMABaseline
 class ExperimentConfig:
     name: str
     dataset_factory: Callable[[], SoccerDataset]
-    batch_size: int
-    lr: float
-    num_epochs: int
     model: torch.nn.Module
     forward_pass: Callable[
-        [torch.Tensor, torch.nn.Module, torch.device], tuple[torch.Tensor, torch.Tensor]
+        [torch.Tensor, torch.nn.Module, torch.device],
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+    ]
+    criterion: Callable[
+        [Dict[str, torch.Tensor], torch.Tensor, torch.Tensor, torch.Tensor],
+        torch.Tensor,
     ]
     train_split: float = 0.8
     seed = 42
+
+
+@dataclass
+class Hyperparameters:
+    num_epochs: int
+    batch_size: int
+    learning_rate: float
+    weight_decay: float
+    patience: int
+    goal_information: bool
+    alpha: float
+    beta: float
+    starting_year: int
+    ending_year: int
+    time_interval: int
 
 
 def forward_pass_rnn(batch, model, device, percentage_of_match=0.8):
@@ -32,7 +50,9 @@ def forward_pass_rnn(batch, model, device, percentage_of_match=0.8):
     sequences: list of HeteroData sequences (length = batch_size)
     """
     sequences = batch["sequences"]
-    labels = batch["labels"].to(device)
+    labels_y = batch["labels"].to(device).argmax(dim=1)
+    labels_home_goals = batch["metadata"]["final_home_goals"].to(device)
+    labels_away_goals = batch["metadata"]["final_away_goals"].to(device)
 
     all_features = []
 
@@ -95,9 +115,7 @@ def forward_pass_rnn(batch, model, device, percentage_of_match=0.8):
 
     out = model(features_batch)
 
-    y = labels.argmax(dim=1)
-
-    return out, y
+    return out, labels_y, labels_home_goals, labels_away_goals
 
 
 def extract_global_feature_from_match(data, device):
@@ -221,8 +239,11 @@ def forward_pass_gat(batch, model, device):
     )
 
     # y shape: (batch_size,)
-    y = batch.y.reshape(-1, 3).argmax(dim=1)
-    return out, y
+    labels_y = batch.y.reshape(-1, 3).argmax(dim=1)
+    labels_home_goals = batch.final_home_goals.reshape(-1, 1)  # Necessary?
+    labels_away_goals = batch.final_away_goals.reshape(-1, 1)
+
+    return out, labels_y, labels_home_goals, labels_away_goals
 
 
 def forward_pass_disjoint(batch, model, device, percentage_of_match=0.8):
@@ -239,91 +260,92 @@ def forward_pass_disjoint(batch, model, device, percentage_of_match=0.8):
     - batch_size, window_size: integers
     """
     sequences = batch["sequences"]
-    labels = batch["labels"].to(device)
+    labels_y = batch["labels"].to(device).argmax(dim=1)
+    labels_home_goals = batch["metadata"]["final_home_goals"].to(device)
+    labels_away_goals = batch["metadata"]["final_away_goals"].to(device)
     batch_size = len(sequences)
 
     # Determine window size (number of timeframes to use)
     window_size = max(1, int(percentage_of_match * len(sequences[0])))
 
-    # Initialize lists to hold data for each timestep
-    x1_list = []
-    x2_list = []
-    edge_index1_list = []
-    edge_index2_list = []
-    edge_weight1_list = []
-    edge_weight2_list = []
-    batch1_list = []
-    batch2_list = []
-    x_norm2_1_list = []
-    x_norm2_2_list = []
+    # Preallocate lists
+    x1_list, x2_list = [], []
+    edge_index1_list, edge_index2_list = [], []
+    edge_weight1_list, edge_weight2_list = [], []
+    batch1_list, batch2_list = [], []
+    x_norm2_1_list, x_norm2_2_list = [], []
 
-    # Process each timestep across all matches
-    for timestep in range(window_size):
-        # Collect data from all matches at this timestep
-        timestep_x1 = []
-        timestep_x2 = []
-        timestep_edge_index1 = []
-        timestep_edge_index2 = []
-        timestep_edge_weight1 = []
-        timestep_edge_weight2 = []
-        timestep_batch1 = []
-        timestep_batch2 = []
-        timestep_global_home = []
-        timestep_global_away = []
+    # Move all HeteroData to device first (avoid repeated .to(device) calls)
+    for seq in sequences:
+        for data in seq:
+            for node_type in ["home", "away"]:
+                data[node_type].x = data[node_type].x.to(device)
+                data[node_type, "passes_to", node_type].edge_index = data[
+                    node_type, "passes_to", node_type
+                ].edge_index.to(device)
+                data[node_type, "passes_to", node_type].edge_weight = data[
+                    node_type, "passes_to", node_type
+                ].edge_weight.to(device)
 
-        home_node_offset = 0
-        away_node_offset = 0
+    # Precompute global features on CPU first
+    precomputed_features = []
+    for match_sequence in sequences:
+        match_features = []
+        for data in match_sequence[:window_size]:
+            match_features.append(extract_global_feature_from_match(data, device))
+        precomputed_features.append(match_features)
+
+    # Process each timestep
+    for t in range(window_size):
+        timestep_x1, timestep_x2 = [], []
+        timestep_edge_index1, timestep_edge_index2 = [], []
+        timestep_edge_weight1, timestep_edge_weight2 = [], []
+        timestep_batch1, timestep_batch2 = [], []
+        timestep_global_home, timestep_global_away = [], []
+
+        home_offset, away_offset = 0, 0
 
         for match_idx, match_sequence in enumerate(sequences):
-            # Get data for this match at this timestep
-            if timestep < len(match_sequence):
-                data = match_sequence[timestep]
-            else:
-                # If this match is shorter, use the last timeframe (padding)
-                data = match_sequence[-1]
+            data = match_sequence[t] if t < len(match_sequence) else match_sequence[-1]
 
-            # Extract node features
-            home_nodes = data["home"].x.to(device)
-            away_nodes = data["away"].x.to(device)
+            # Node features
+            h_nodes = data["home"].x
+            a_nodes = data["away"].x
 
-            # Extract edge information
-            home_edge_index = data["home", "passes_to", "home"].edge_index.to(device)
-            away_edge_index = data["away", "passes_to", "away"].edge_index.to(device)
-            home_edge_weight = data["home", "passes_to", "home"].edge_weight.to(device)
-            away_edge_weight = data["away", "passes_to", "away"].edge_weight.to(device)
+            # Edges
+            h_edge_index = data["home", "passes_to", "home"].edge_index + home_offset
+            a_edge_index = data["away", "passes_to", "away"].edge_index + away_offset
+            h_edge_weight = data["home", "passes_to", "home"].edge_weight
+            a_edge_weight = data["away", "passes_to", "away"].edge_weight
 
-            # Adjust edge indices for batching (add offset)
-            home_edge_index_adjusted = home_edge_index + home_node_offset
-            away_edge_index_adjusted = away_edge_index + away_node_offset
-
-            # Create batch assignments
-            home_batch = torch.full(
-                (home_nodes.size(0),), match_idx, dtype=torch.long, device=device
+            # Batch assignments
+            h_batch = torch.full(
+                (h_nodes.size(0),), match_idx, device=device, dtype=torch.long
             )
-            away_batch = torch.full(
-                (away_nodes.size(0),), match_idx, dtype=torch.long, device=device
+            a_batch = torch.full(
+                (a_nodes.size(0),), match_idx, device=device, dtype=torch.long
             )
 
-            # Extract global features
-            home_feat, away_feat = extract_global_feature_from_match(data, device)
+            # Global features
+            h_feat, a_feat = precomputed_features[match_idx][t]
 
             # Append to timestep lists
-            timestep_x1.append(home_nodes)
-            timestep_x2.append(away_nodes)
-            timestep_edge_index1.append(home_edge_index_adjusted)
-            timestep_edge_index2.append(away_edge_index_adjusted)
-            timestep_edge_weight1.append(home_edge_weight)
-            timestep_edge_weight2.append(away_edge_weight)
-            timestep_batch1.append(home_batch)
-            timestep_batch2.append(away_batch)
-            timestep_global_home.append(home_feat)
-            timestep_global_away.append(away_feat)
+            timestep_x1.append(h_nodes)
+            timestep_x2.append(a_nodes)
+            timestep_edge_index1.append(h_edge_index)
+            timestep_edge_index2.append(a_edge_index)
+            timestep_edge_weight1.append(h_edge_weight)
+            timestep_edge_weight2.append(a_edge_weight)
+            timestep_batch1.append(h_batch)
+            timestep_batch2.append(a_batch)
+            timestep_global_home.append(h_feat)
+            timestep_global_away.append(a_feat)
 
-            # Update offsets for next match
-            home_node_offset += home_nodes.size(0)
-            away_node_offset += away_nodes.size(0)
+            # Update offsets
+            home_offset += h_nodes.size(0)
+            away_offset += a_nodes.size(0)
 
-        # Concatenate all matches for this timestep
+        # Concatenate once per timestep
         x1_list.append(torch.cat(timestep_x1, dim=0))
         x2_list.append(torch.cat(timestep_x2, dim=0))
         edge_index1_list.append(torch.cat(timestep_edge_index1, dim=1))
@@ -335,7 +357,6 @@ def forward_pass_disjoint(batch, model, device, percentage_of_match=0.8):
         x_norm2_1_list.append(torch.stack(timestep_global_home, dim=0))
         x_norm2_2_list.append(torch.stack(timestep_global_away, dim=0))
 
-    # Forward pass through model
     out = model(
         x1=x1_list,
         x2=x2_list,
@@ -351,67 +372,114 @@ def forward_pass_disjoint(batch, model, device, percentage_of_match=0.8):
         window_size=window_size,
     )
 
-    # Handle output format
-    if isinstance(out, dict):
-        # If model returns dict with goal predictions
-        logits = out["class_logits"]
-    else:
-        logits = out
+    return out, labels_y, labels_home_goals, labels_away_goals
 
-    # Convert labels to class indices if needed
-    if labels.dim() > 1:
-        y = labels.argmax(dim=1)
-    else:
-        y = labels
 
-    return logits, y
-
+# Define hyperparameters
+HYPERPARAMETERS = Hyperparameters(
+    num_epochs=5,
+    batch_size=32,
+    learning_rate=5e-4,
+    weight_decay=1e-5,
+    patience=5,
+    goal_information=True,
+    alpha=1.0,
+    beta=0.5,
+    starting_year=2015,
+    ending_year=2015,
+    time_interval=5,
+)
 
 # Define multiple experiment setups here
 EXPERIMENTS = {
     "small": ExperimentConfig(
         name="small",
-        dataset_factory=lambda: SequentialSoccerDataset(root="data", ending_year=2015),
-        batch_size=16,
-        lr=1e-3,
-        num_epochs=1,
-        model=SpatialModel(input_size=4, L=6),
+        dataset_factory=lambda: CumulativeSoccerDataset(
+            root="../data",
+            ending_year=2015,
+            time_interval=HYPERPARAMETERS.time_interval,
+        ),
+        model=SpatialModel(
+            input_size=4, L=6, goal_information=HYPERPARAMETERS.goal_information
+        ),
         forward_pass=forward_pass_gat,
+        criterion=build_criterion(
+            goal_information=HYPERPARAMETERS.goal_information,
+            alpha=HYPERPARAMETERS.alpha,
+            beta=HYPERPARAMETERS.beta,
+        ),
     ),
     "large": ExperimentConfig(
         name="large",
-        dataset_factory=lambda: SequentialSoccerDataset(root="data"),
-        batch_size=64,
-        lr=5e-4,
-        num_epochs=20,
-        model=SpatialModel(input_size=4, L=6),
+        dataset_factory=lambda: CumulativeSoccerDataset(
+            root="../data",
+            starting_year=HYPERPARAMETERS.starting_year,
+            ending_year=HYPERPARAMETERS.ending_year,
+            time_interval=HYPERPARAMETERS.time_interval,
+        ),
+        model=SpatialModel(input_size=4, L=6, goal_information=False),
         forward_pass=forward_pass_gat,
+        criterion=build_criterion(goal_information=False),
     ),
     "rnn": ExperimentConfig(
         name="rnn",
-        dataset_factory=lambda: TemporalSoccerDataset(root="data"),
-        batch_size=16,
-        lr=5e-4,
-        num_epochs=20,
-        model=SimpleRNNModel(input_size=6, hidden_size=64, num_layers=1, output_size=3),
+        dataset_factory=lambda: TemporalSoccerDataset(
+            root="../data",
+            starting_year=HYPERPARAMETERS.starting_year,
+            ending_year=HYPERPARAMETERS.ending_year,
+            time_interval=HYPERPARAMETERS.time_interval,
+        ),
+        model=SimpleRNNModel(
+            input_size=6,
+            hidden_size=64,
+            num_layers=1,
+            output_size=3,
+            goal_information=HYPERPARAMETERS.goal_information,
+        ),
         forward_pass=forward_pass_rnn,
+        criterion=build_criterion(
+            goal_information=HYPERPARAMETERS.goal_information,
+            alpha=HYPERPARAMETERS.alpha,
+            beta=HYPERPARAMETERS.beta,
+        ),
     ),
     "varma": ExperimentConfig(
         name="varma",
-        dataset_factory=lambda: TemporalSoccerDataset(root="data"),
-        batch_size=16,
-        lr=5e-4,
-        num_epochs=20,
-        model=VARMABaseline(input_size=6, hidden_size=64, p=2, q=1, num_classes=3),
+        dataset_factory=lambda: TemporalSoccerDataset(
+            root="../data",
+            starting_year=HYPERPARAMETERS.starting_year,
+            ending_year=HYPERPARAMETERS.ending_year,
+            time_interval=HYPERPARAMETERS.time_interval,
+        ),
+        model=VARMABaseline(
+            input_size=6,
+            hidden_size=64,
+            p=2,
+            q=1,
+            num_classes=3,
+            goal_information=HYPERPARAMETERS.goal_information,
+        ),
         forward_pass=forward_pass_rnn,
+        criterion=build_criterion(
+            goal_information=HYPERPARAMETERS.goal_information,
+            alpha=HYPERPARAMETERS.alpha,
+            beta=HYPERPARAMETERS.beta,
+        ),
     ),
     "disjoint": ExperimentConfig(
         name="disjoint",
-        dataset_factory=lambda: TemporalSoccerDataset(root="data"),
-        batch_size=8,
-        lr=1e-3,
-        num_epochs=20,
-        model=DisjointModel(),
+        dataset_factory=lambda: TemporalSoccerDataset(
+            root="../data",
+            starting_year=HYPERPARAMETERS.starting_year,
+            ending_year=HYPERPARAMETERS.ending_year,
+            time_interval=HYPERPARAMETERS.time_interval,
+        ),
+        model=DisjointModel(goal_information=HYPERPARAMETERS.goal_information),
         forward_pass=forward_pass_disjoint,
+        criterion=build_criterion(
+            goal_information=HYPERPARAMETERS.goal_information,
+            alpha=HYPERPARAMETERS.alpha,
+            beta=HYPERPARAMETERS.beta,
+        ),
     ),
 }
