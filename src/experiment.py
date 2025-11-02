@@ -12,12 +12,8 @@ from tqdm import tqdm
 from dataloader_paired import TemporalSoccerDataset
 from experiment_configs import EXPERIMENTS, HYPERPARAMETERS
 from result_metrics import evaluate_across_time, evaluate_rps
-from saving_results import (
-    load_checkpoint,
-    make_run_dir,
-    plot_training_curves,
-    save_checkpoint,
-)
+from saving_results import (load_checkpoint, make_run_dir,
+                            plot_training_curves, save_checkpoint)
 
 
 def group_indices_by_match(dataset):
@@ -164,14 +160,6 @@ def main():
     forward_pass = cfg.forward_pass
 
     # Split into train/test
-    # train_size = int(cfg.train_split * len(dataset))
-    # test_size = len(dataset) - train_size
-    # train_dataset, test_dataset = torch.utils.data.random_split(
-    #     dataset,
-    #     [train_size, test_size],
-    #     generator=torch.Generator().manual_seed(cfg.seed),
-    # )
-
     train_idx, val_idx, test_idx = split_by_match(
         dataset, train_ratio=cfg.train_split, seed=cfg.seed
     )

@@ -1,14 +1,11 @@
 from dataclasses import dataclass
-from typing import Any, Callable, Dict
+from typing import Callable, Dict
 
 import torch
 
 from criterion import build_criterion
-from dataloader_paired import (
-    CumulativeSoccerDataset,
-    SoccerDataset,
-    TemporalSoccerDataset,
-)
+from dataloader_paired import (CumulativeSoccerDataset, SoccerDataset,
+                               TemporalSoccerDataset)
 from models.disjoint import DisjointModel
 from models.gat import SpatialModel
 from models.rnn import SimpleRNNModel
@@ -21,7 +18,8 @@ class ExperimentConfig:
     dataset_factory: Callable[[], SoccerDataset]
     model: torch.nn.Module
     forward_pass: Callable[
-        [torch.Tensor, torch.nn.Module, torch.device], tuple[torch.Tensor, torch.Tensor]
+        [torch.Tensor, torch.nn.Module, torch.device],
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
     ]
     criterion: Callable[
         [Dict[str, torch.Tensor], torch.Tensor, torch.Tensor, torch.Tensor],
