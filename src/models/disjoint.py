@@ -73,13 +73,15 @@ class DisjointModel(torch.nn.Module):
             combined = torch.cat([x1_out, x2_out])  # [batch_size, 2 * N4]
             outputs[timestep_idx, :] = combined
 
-        _, hidden = self.rnn(outputs.unsqueeze(0))
+        # WATCH OUT IF WE USE BATCH SIZE
+        rnn_out, hidden = self.rnn(outputs.unsqueeze(0))
+        rnn_out = rnn_out.squeeze(0)
 
         if self.goal_information:
             return {
-                "class_logits": self.classifier(hidden[-1]),
-                "home_goals_pred": self.goal_home_predicter(hidden[-1]),
-                "away_goals_pred": self.goal_away_predicter(hidden[-1]),
+                "class_logits": self.classifier(rnn_out),
+                "home_goals_pred": self.goal_home_predicter(rnn_out),
+                "away_goals_pred": self.goal_away_predicter(rnn_out),
             }
         else:
-            return {"class_logits": self.classifier(hidden[-1])}
+            return {"class_logits": self.classifier(rnn_out)}
