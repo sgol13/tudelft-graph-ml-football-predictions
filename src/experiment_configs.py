@@ -4,13 +4,16 @@ from typing import Callable, Dict
 import torch
 
 from criterion import build_criterion
-from dataloader_paired import (CumulativeSoccerDataset, SoccerDataset,
-                               TemporalSoccerDataset)
+from dataloader_paired import (
+    CumulativeSoccerDataset,
+    SoccerDataset,
+    TemporalSoccerDataset,
+    TemporalSequence,
+)
 from models.disjoint import DisjointModel
 from models.gat import SpatialModel
 from models.rnn import SimpleRNNModel
 from models.varma import VARMABaseline
-from src.dataloader_paired import TemporalSequence
 
 
 @dataclass
@@ -252,7 +255,7 @@ HYPERPARAMETERS = Hyperparameters(
     learning_rate=5e-4,
     weight_decay=1e-5,
     patience=10,
-    goal_information=True,
+    goal_information=False,
     alpha=1.0,
     beta=0.5,
     starting_year=2020,
