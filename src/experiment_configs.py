@@ -54,9 +54,9 @@ def forward_pass_rnn(entry: TemporalSequence, model, device, percentage_of_match
     sequence: list of HeteroData sequence (length = batch_size)
     """
     sequence = entry.hetero_data_sequence
-    labels_y = entry.y.to(device).argmax(dim=1)
-    labels_home_goals = entry.final_home_goals.to(device)
-    labels_away_goals = entry.final_away_goals.to(device)
+    labels_y = entry.y.to(device).argmax(dim=0).unsqueeze(0)
+    labels_home_goals = entry.final_home_goals.to(device).unsqueeze(0)
+    labels_away_goals = entry.final_away_goals.to(device).unsqueeze(0)
 
     match_features = []
     stop = max(1, int(percentage_of_match * len(sequence)))
