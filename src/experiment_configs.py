@@ -13,6 +13,7 @@ from models.disjoint import DisjointModel
 from models.gat import SpatialModel
 from models.rnn import SimpleRNNModel
 from models.varma import VARMABaseline
+from src.dataloader_paired import TemporalSequence
 
 
 @dataclass
@@ -47,76 +48,53 @@ class Hyperparameters:
     time_interval: int
 
 
-def forward_pass_rnn(batch, model, device, percentage_of_match=0.8):
+def forward_pass_rnn(entry: TemporalSequence, model, device, percentage_of_match=0.8):
     """
-    batch: dict with keys 'sequences', 'labels', 'metadata'
-    sequences: list of HeteroData sequences (length = batch_size)
+    batch: dict with keys 'sequence', 'labels', 'metadata'
+    sequence: list of HeteroData sequence (length = batch_size)
     """
-    sequences = batch["sequences"]
-    labels_y = batch["labels"].to(device).argmax(dim=1)
-    labels_home_goals = batch["metadata"]["final_home_goals"].to(device)
-    labels_away_goals = batch["metadata"]["final_away_goals"].to(device)
+    sequence = entry.hetero_data_sequence
+    labels_y = entry.y.to(device).argmax(dim=1)
+    labels_home_goals = entry.final_home_goals.to(device)
+    labels_away_goals = entry.final_away_goals.to(device)
 
-    all_features = []
+    match_features = []
+    stop = max(1, int(percentage_of_match * len(sequence)))
 
-    for match_sequence in sequences:  # Iterate over matches in the batch
-        match_features = []
-        stop = max(1, int(percentage_of_match * len(match_sequence)))
+    for i in range(stop):
+        data = sequence[i]
 
-        for i in range(stop):
-            data = match_sequence[i]
-
-            # Extract features
-            home_nodes = data["home"].x.size(0)
-            away_nodes = data["away"].x.size(0)
-            home_unique_passes = data["home", "passes_to", "home"].edge_index.size(1)
-            away_unique_passes = data["away", "passes_to", "away"].edge_index.size(1)
-            home_total_passes = (
-                data["home", "passes_to", "home"].edge_weight.sum().item()
-            )
-            away_total_passes = (
-                data["away", "passes_to", "away"].edge_weight.sum().item()
-            )
-
-            features = torch.tensor(
-                [
-                    home_nodes,
-                    away_nodes,
-                    home_unique_passes,
-                    away_unique_passes,
-                    home_total_passes,
-                    away_total_passes,
-                ],
-                dtype=torch.float,
-                device=device,
-            )
-            match_features.append(features)
-
-        # Stack features for this match: (seq_len, feature_dim)
-        if len(match_features) > 0:
-            match_features_tensor = torch.stack(match_features)
-            all_features.append(match_features_tensor)
-
-    if len(all_features) == 0:
-        # Handle empty batch
-        return torch.zeros(0, 3, device=device), torch.zeros(
-            0, dtype=torch.long, device=device
+        # Extract features
+        home_nodes = data["home"].x.size(0)
+        away_nodes = data["away"].x.size(0)
+        home_unique_passes = data["home", "passes_to", "home"].edge_index.size(1)
+        away_unique_passes = data["away", "passes_to", "away"].edge_index.size(1)
+        home_total_passes = (
+            data["home", "passes_to", "home"].edge_weight.sum().item()
+        )
+        away_total_passes = (
+            data["away", "passes_to", "away"].edge_weight.sum().item()
         )
 
-    # Pad sequences to same length for batching
-    max_len = max(f.size(0) for f in all_features)
-    padded_features = []
+        features = torch.tensor(
+            [
+                home_nodes,
+                away_nodes,
+                home_unique_passes,
+                away_unique_passes,
+                home_total_passes,
+                away_total_passes,
+            ],
+            dtype=torch.float,
+            device=device,
+        )
+        match_features.append(features)
 
-    for f in all_features:
-        if f.size(0) < max_len:
-            padding = torch.zeros(max_len - f.size(0), f.size(1), device=device)
-            f = torch.cat([f, padding], dim=0)
-        padded_features.append(f)
+    # Stack features for this match: (1, seq_len, feature_dim)
+    match_features_tensor = torch.stack(match_features).unsqueeze(0)
 
-    # Stack into batch: (batch_size, seq_len, feature_dim)
-    features_batch = torch.stack(padded_features)
-
-    out = model(features_batch)
+    # out: (1, 3)
+    out = model(match_features_tensor)
 
     return out, labels_y, labels_home_goals, labels_away_goals
 
@@ -350,7 +328,7 @@ EXPERIMENTS = {
     "small": ExperimentConfig(
         name="small",
         dataset_factory=lambda: CumulativeSoccerDataset(
-            root="../data",
+            root="data",
             ending_year=2015,
             time_interval=HYPERPARAMETERS.time_interval,
         ),
@@ -367,7 +345,7 @@ EXPERIMENTS = {
     "large": ExperimentConfig(
         name="large",
         dataset_factory=lambda: CumulativeSoccerDataset(
-            root="../data",
+            root="data",
             starting_year=HYPERPARAMETERS.starting_year,
             ending_year=HYPERPARAMETERS.ending_year,
             time_interval=HYPERPARAMETERS.time_interval,
@@ -379,7 +357,7 @@ EXPERIMENTS = {
     "rnn": ExperimentConfig(
         name="rnn",
         dataset_factory=lambda: TemporalSoccerDataset(
-            root="../data",
+            root="data",
             starting_year=HYPERPARAMETERS.starting_year,
             ending_year=HYPERPARAMETERS.ending_year,
             time_interval=HYPERPARAMETERS.time_interval,
@@ -401,7 +379,7 @@ EXPERIMENTS = {
     "varma": ExperimentConfig(
         name="varma",
         dataset_factory=lambda: TemporalSoccerDataset(
-            root="../data",
+            root="data",
             starting_year=HYPERPARAMETERS.starting_year,
             ending_year=HYPERPARAMETERS.ending_year,
             time_interval=HYPERPARAMETERS.time_interval,
@@ -424,7 +402,7 @@ EXPERIMENTS = {
     "disjoint": ExperimentConfig(
         name="disjoint",
         dataset_factory=lambda: TemporalSoccerDataset(
-            root="../data",
+            root="data",
             starting_year=HYPERPARAMETERS.starting_year,
             ending_year=HYPERPARAMETERS.ending_year,
             time_interval=HYPERPARAMETERS.time_interval,

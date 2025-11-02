@@ -14,10 +14,9 @@ from tqdm import tqdm
 @dataclass
 class TemporalSequence:
     hetero_data_sequence: List[HeteroData]  # [t0, t1, t2, ...]
-    y: torch.Tensor  # Single label for entire sequence
+    y: torch.Tensor  # Single label for the entire sequence
     final_home_goals: torch.Tensor
     final_away_goals: torch.Tensor
-    sequence_length: int
     season: str
     match_id: str
     idx: int
@@ -374,7 +373,7 @@ def build_team_graphs_with_goals(
 
 def build_team_graphs_progressive(
     events, home_team: str, away_team: str, time_interval=5
-) -> List[TemporalSequence]:
+) -> TemporalSequence:
     """Build paired graphs with both home and away teams for each time interval."""
     if events.empty or "minute" not in events.columns:
         raise Exception("Faulty data entry")
@@ -431,20 +430,20 @@ def build_team_graphs_progressive(
         hetero_data.home_team = home_team
         hetero_data.away_team = away_team
 
-        # Create TemporalSequence with **just this interval**
-        sequence = TemporalSequence(
-            hetero_data_sequence=[hetero_data],  # single timestep
-            y=final_result_onehot,
-            final_home_goals=torch.tensor(final_home_goals, dtype=torch.long),
-            final_away_goals=torch.tensor(final_away_goals, dtype=torch.long),
-            sequence_length=1,  # only this interval
-            season="",
-            match_id="",
-            idx=0,
-        )
-        sequences.append(sequence)
+        sequences.append(hetero_data)
 
-    return sequences
+    # Create TemporalSequence with **just this interval**
+    sequence = TemporalSequence(
+        hetero_data_sequence=sequences,
+        y=final_result_onehot,
+        final_home_goals=torch.tensor(final_home_goals, dtype=torch.long),
+        final_away_goals=torch.tensor(final_away_goals, dtype=torch.long),
+        season="",
+        match_id="",
+        idx=0,
+    )
+
+    return sequence
 
 
 class SoccerDataset(Dataset):
@@ -578,26 +577,25 @@ class TemporalSoccerDataset(SoccerDataset):
 
                 # Get entire temporal sequence for this match
                 try:
-                    temporal_sequence = self._process_match(
+                    sequence = self._process_match(
                         events, home_team, away_team
                     )
                 except Exception:
                     continue
 
-                for sequence in temporal_sequence:
-                    sequence.season = season_name
-                    sequence.match_id = match_id
-                    sequence.idx = idx
+                sequence.season = season_name
+                sequence.match_id = match_id
+                sequence.idx = idx
 
-                    if self.pre_filter and not self.pre_filter(sequence):
-                        continue
-                    if self.pre_transform:
-                        sequence = self.pre_transform(sequence)
+                if self.pre_filter and not self.pre_filter(sequence):
+                    continue
+                if self.pre_transform:
+                    sequence = self.pre_transform(sequence)
 
-                    torch.save(
-                        sequence, Path(self.processed_dir) / f"sequence_{idx}.pt"
-                    )
-                    idx += 1
+                torch.save(
+                    sequence, Path(self.processed_dir) / f"sequence_{idx}.pt"
+                )
+                idx += 1
 
     def get(self, idx) -> TemporalSequence:
         file = Path(self.processed_dir) / f"sequence_{idx}.pt"
@@ -633,8 +631,7 @@ class CumulativeSoccerDataset(SoccerDataset):
 
 
 def main():
-    # Test the improved version
-    dataset = SequentialSoccerDataset(
+    dataset = TemporalSoccerDataset(
         root="data", starting_year=2015, ending_year=2016, time_interval=30
     )
     print(f"Dataset length: {len(dataset)}")
