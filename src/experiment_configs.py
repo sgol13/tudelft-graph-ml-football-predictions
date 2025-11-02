@@ -33,7 +33,6 @@ class ExperimentConfig:
 @dataclass
 class Hyperparameters:
     num_epochs: int
-    batch_size: int
     learning_rate: float
     weight_decay: float
     patience: int
@@ -249,16 +248,15 @@ def forward_pass_disjoint(
 
 # Define hyperparameters
 HYPERPARAMETERS = Hyperparameters(
-    num_epochs=5,
-    batch_size=32,
+    num_epochs=20,
     learning_rate=5e-4,
     weight_decay=1e-5,
-    patience=5,
+    patience=10,
     goal_information=True,
     alpha=1.0,
     beta=0.5,
-    starting_year=2015,
-    ending_year=2015,
+    starting_year=2020,
+    ending_year=2024,
     time_interval=5,
 )
 

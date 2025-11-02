@@ -40,7 +40,7 @@ def make_run_dir(cfg, hyp, base_dir="runs"):
     """
     run_name = (
         f"{hyp.starting_year}_{hyp.ending_year}/{cfg.name}/time_interval{hyp.time_interval}/goal_{hyp.goal_information}/"
-        f"b{hyp.batch_size}_lr{hyp.learning_rate}_wr{hyp.weight_decay}_a{hyp.alpha}_b{hyp.beta}"
+        f"lr{hyp.learning_rate}_wr{hyp.weight_decay}_a{hyp.alpha}_b{hyp.beta}"
     )
 
     run_dir = os.path.join(base_dir, run_name)
