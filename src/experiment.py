@@ -1,20 +1,19 @@
 import argparse
-from pathlib import Path
 import os
+import random
+from collections import defaultdict
 
 import torch
-import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from torch_geometric.loader import DataLoader as GeometricDataLoader
 from tqdm import tqdm
-from collections import defaultdict
-import random
 
 from dataloader_paired import TemporalSoccerDataset
 from experiment_configs import EXPERIMENTS, HYPERPARAMETERS
-from saving_results import make_run_dir, save_checkpoint, load_checkpoint, plot_training_curves
-from result_metrics import evaluate_rps, evaluate_across_time
+from result_metrics import evaluate_across_time, evaluate_rps
+from saving_results import (load_checkpoint, make_run_dir,
+                            plot_training_curves, save_checkpoint)
 
 
 def group_indices_by_match(dataset):
@@ -24,8 +23,9 @@ def group_indices_by_match(dataset):
         match_to_indices[match_id].append(idx)
     return match_to_indices
 
+
 def split_by_match(dataset, train_ratio=0.7, seed=42):
-    val_ratio = 1 - train_ratio/2
+    val_ratio = 1 - train_ratio / 2
     random.seed(seed)
     match_to_indices = group_indices_by_match(dataset)
 
@@ -37,12 +37,12 @@ def split_by_match(dataset, train_ratio=0.7, seed=42):
     n_val = int(val_ratio * n_total)
 
     train_matches = all_matches[:n_train]
-    val_matches = all_matches[n_train:n_train + n_val]
-    test_matches = all_matches[n_train + n_val:]
+    val_matches = all_matches[n_train : n_train + n_val]
+    test_matches = all_matches[n_train + n_val :]
 
     train_indices = [i for m in train_matches for i in match_to_indices[m]]
-    val_indices   = [i for m in val_matches for i in match_to_indices[m]]
-    test_indices  = [i for m in test_matches for i in match_to_indices[m]]
+    val_indices = [i for m in val_matches for i in match_to_indices[m]]
+    test_indices = [i for m in test_matches for i in match_to_indices[m]]
 
     return train_indices, val_indices, test_indices
 
@@ -168,19 +168,23 @@ def main():
     #     generator=torch.Generator().manual_seed(cfg.seed),
     # )
 
-    train_idx, val_idx, test_idx = split_by_match(dataset, train_ratio=cfg.train_split, seed=cfg.seed)
+    train_idx, val_idx, test_idx = split_by_match(
+        dataset, train_ratio=cfg.train_split, seed=cfg.seed
+    )
 
     train_dataset = torch.utils.data.Subset(dataset, train_idx)
     val_dataset = torch.utils.data.Subset(dataset, val_idx)
     test_dataset = torch.utils.data.Subset(dataset, test_idx)
 
-
     train_loader = GeometricDataLoader(train_dataset, batch_size=hyp.batch_size, shuffle=True)  # type: ignore
-    test_loader = GeometricDataLoader(val_dataset, batch_size=hyp.batch_size, shuffle=True)  # type: ignore
+    test_loader = GeometricDataLoader(test_dataset, batch_size=hyp.batch_size, shuffle=True)  # type: ignore
+    val_loader = GeometricDataLoader(val_dataset, batch_size=hyp.batch_size, shuffle=True)  # type: ignore
+
     if type(dataset) is TemporalSoccerDataset:
         print("Using custom collate function")
         train_loader = DataLoader(train_dataset, batch_size=hyp.batch_size, shuffle=True, collate_fn=collate_temporal_sequences)  # type: ignore
-        test_loader = DataLoader(val_dataset, batch_size=hyp.batch_size, shuffle=True, collate_fn=collate_temporal_sequences)  # type: ignore
+        test_loader = DataLoader(test_dataset, batch_size=hyp.batch_size, shuffle=True, collate_fn=collate_temporal_sequences)  # type: ignore
+        val_loader = DataLoader(val_dataset, batch_size=hyp.batch_size, shuffle=True, collate_fn=collate_temporal_sequences)  # type: ignore
 
     # Model setup
     model = cfg.model.to(device)
@@ -188,16 +192,18 @@ def main():
 
     run_dir, exists = make_run_dir(cfg, hyp)
     print(f"Run directory: {run_dir}")
-    
-    should_load_model = (
-        not args.retrain_model and exists
-    )
+
+    should_load_model = not args.retrain_model and exists
 
     criterion = cfg.criterion
-    optimizer = optim.Adam(model.parameters(), lr=hyp.learning_rate, weight_decay=hyp.weight_decay)
+    optimizer = optim.Adam(
+        model.parameters(), lr=hyp.learning_rate, weight_decay=hyp.weight_decay
+    )
 
     num_epochs = hyp.num_epochs
-    start_epoch, best_acc, best_val_loss, history = load_checkpoint(model, optimizer, run_dir)
+    start_epoch, best_acc, best_test_loss, history = load_checkpoint(
+        model, optimizer, run_dir
+    )
 
     early_stopping_counter = 0
 
@@ -206,28 +212,37 @@ def main():
         for epoch in range(start_epoch, num_epochs):
             print(f"\nEpoch {epoch+1}/{num_epochs}")
 
-
-            train_loss, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device, forward_pass)
-            test_loss, test_acc = evaluate(model, test_loader, criterion, device, forward_pass)
+            train_loss, train_acc = train_one_epoch(
+                model, train_loader, criterion, optimizer, device, forward_pass
+            )
+            test_loss, test_acc = evaluate(
+                model, test_loader, criterion, device, forward_pass
+            )
 
             history["train_loss"].append(train_loss)
             history["test_loss"].append(test_loss)
             history["train_acc"].append(train_acc)
             history["test_acc"].append(test_acc)
 
-            if test_loss < best_val_loss:
-                best_val_loss = test_loss
+            if test_loss < best_test_loss:
+                best_test_loss = test_loss
                 early_stopping_counter = 0
                 torch.save(model.state_dict(), os.path.join(run_dir, "best_model.pth"))
                 print(f"🏆 New best model saved (val_loss={test_loss:.4f})")
             else:
                 early_stopping_counter += 1
-                print(f"No improvement for {early_stopping_counter}/{hyp.patience} epochs")
+                print(
+                    f"No improvement for {early_stopping_counter}/{hyp.patience} epochs"
+                )
 
-            save_checkpoint(model, optimizer, epoch, best_acc, best_val_loss, history, run_dir)
+            save_checkpoint(
+                model, optimizer, epoch, best_acc, best_test_loss, history, run_dir
+            )
 
-            print(f"Train Loss: {train_loss:.4f}, Val Loss: {test_loss:.4f}, "
-                f"Train Acc: {train_acc:.2f}%, Val Acc: {test_acc:.2f}%")
+            print(
+                f"Train Loss: {train_loss:.4f}, Val Loss: {test_loss:.4f}, "
+                f"Train Acc: {train_acc:.2f}%, Val Acc: {test_acc:.2f}%"
+            )
 
             if early_stopping_counter >= hyp.patience:
                 print("🛑 Early stopping triggered.")
@@ -235,14 +250,17 @@ def main():
             plot_training_curves(history, run_dir)
 
         print("\n✅ Training complete!")
-        print(f"Best validation loss: {best_val_loss:.4f}")
+        print(f"Best test loss: {best_test_loss:.4f}")
+        print("Validation test:")
+        val_loss, val_acc = evaluate(model, val_loader, criterion, device, forward_pass)
+        print(f"Validation loss: {val_loss}")
+        print(f"Validation accuracy: {val_acc}")
         print(f"Run directory: {run_dir}")
     else:
         ###WHAT WE WANT TO DO, STUDIES
         evaluate_rps(model, test_loader, device, forward_pass)
         evaluate_across_time(model, test_loader, device, forward_pass, run_dir)
-        
+
 
 if __name__ == "__main__":
     main()
-
