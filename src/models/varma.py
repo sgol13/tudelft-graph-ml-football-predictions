@@ -32,37 +32,100 @@ class VARMABaseline(nn.Module):
             self.goal_away_predicter = nn.Linear(hidden_size, 1)
         self.goal_information = goal_information
 
-    def forward(self, Y, e=None):
-        # Y: tensor of shape [batch_size, seq_len, input_size]
-        # e: residuals (same shape as Y)
+    # def forward(self, Y, e=None):
+    #     # Y: tensor of shape [batch_size, seq_len, input_size]
+    #     # e: residuals (same shape as Y)
 
+    #     batch_size, seq_len, input_size = Y.shape
+
+    #     # Start with zeros
+    #     hidden = torch.zeros(batch_size, self.hidden_size, device=Y.device)
+
+    #     # --- Handle short sequences safely ---
+    #     effective_p = min(self.p, seq_len)
+    #     effective_q = min(self.q, e.shape[1] if e is not None else 0)
+
+    #     # AR component
+    #     for i in range(1, effective_p + 1):
+    #         hidden += self.AR[i - 1](Y[:, -i, :])  # use last p steps
+
+    #     # MA component
+    #     if e is not None and effective_q > 0:
+    #         for j in range(1, effective_q + 1):
+    #             hidden += self.MA[j - 1](e[:, -j, :])
+
+    #     # Nonlinearity
+    #     hidden = torch.tanh(hidden)
+
+    #     # Output
+    #     if self.goal_information:
+    #         return {
+    #             "class_logits": self.fc_out(hidden),
+    #             "home_goals_pred": self.goal_home_predicter(hidden),
+    #             "away_goals_pred": self.goal_away_predicter(hidden),
+    #         }
+    #     else:
+    #         return {"class_logits": self.fc_out(hidden)}  # [batch, output_size]
+
+    def forward(self, Y, e=None):
+        """
+        Y: [batch_size, seq_len, input_size]
+        e: residuals [batch_size, seq_len, input_size] or None
+        Returns:
+            dict with keys:
+                - "class_logits": [seq_len, num_classes] if batch_size=1 else [batch_size, seq_len, num_classes]
+                - optionally "home_goals_pred", "away_goals_pred": same convention
+        """
         batch_size, seq_len, input_size = Y.shape
 
-        # Start with zeros
-        hidden = torch.zeros(batch_size, self.hidden_size, device=Y.device)
-
-        # --- Handle short sequences safely ---
-        effective_p = min(self.p, seq_len)
-        effective_q = min(self.q, e.shape[1] if e is not None else 0)
-
-        # AR component
-        for i in range(1, effective_p + 1):
-            hidden += self.AR[i - 1](Y[:, -i, :])  # use last p steps
-
-        # MA component
-        if e is not None and effective_q > 0:
-            for j in range(1, effective_q + 1):
-                hidden += self.MA[j - 1](e[:, -j, :])
-
-        # Nonlinearity
-        hidden = torch.tanh(hidden)
-
-        # Output
+        class_logits = []
         if self.goal_information:
-            return {
-                "class_logits": self.fc_out(hidden),
-                "home_goals_pred": self.goal_home_predicter(hidden),
-                "away_goals_pred": self.goal_away_predicter(hidden),
-            }
-        else:
-            return {"class_logits": self.fc_out(hidden)}  # [batch, output_size]
+            home_goals_pred = []
+            away_goals_pred = []
+
+        for t in range(seq_len):
+            ar_start = max(0, t - self.p + 1)
+            ar_window = Y[:, ar_start:t+1, :]
+
+            hidden = torch.zeros(batch_size, self.hidden_size, device=Y.device)
+
+            # AR contribution
+            for i, ar_step in enumerate(reversed(range(ar_window.size(1)))):
+                hidden += self.AR[i](ar_window[:, ar_step, :])
+
+            # MA contribution
+            if e is not None:
+                ma_start = max(0, t - self.q + 1)
+                ma_window = e[:, ma_start:t+1, :]
+                for j, ma_step in enumerate(reversed(range(ma_window.size(1)))):
+                    hidden += self.MA[j](ma_window[:, ma_step, :])
+
+            hidden = torch.tanh(hidden)
+
+            class_logits.append(self.fc_out(hidden))
+            if self.goal_information:
+                home_goals_pred.append(self.goal_home_predicter(hidden))
+                away_goals_pred.append(self.goal_away_predicter(hidden))
+
+        # Stack over time dimension
+        class_logits = torch.stack(class_logits, dim=1)  # [batch, seq_len, num_classes]
+        if self.goal_information:
+            home_goals_pred = torch.stack(home_goals_pred, dim=1)
+            away_goals_pred = torch.stack(away_goals_pred, dim=1)
+
+        # If batch_size==1, squeeze batch dim
+        if batch_size == 1:
+            class_logits = class_logits.squeeze(0)          # [seq_len, num_classes]
+            if self.goal_information:
+                home_goals_pred = home_goals_pred.squeeze(0)
+                away_goals_pred = away_goals_pred.squeeze(0)
+
+        output_dict = {"class_logits": class_logits}
+        if self.goal_information:
+            output_dict["home_goals_pred"] = home_goals_pred
+            output_dict["away_goals_pred"] = away_goals_pred
+
+        return output_dict
+
+
+
