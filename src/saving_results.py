@@ -2,9 +2,11 @@ import hashlib
 import json
 import os
 from datetime import datetime
-import torch
+from typing import Any, Dict, List
+
 import matplotlib.pyplot as plt
-from typing import List, Dict, Any
+import torch
+
 
 def plot_training_curves(history: Dict[str, list], save_dir: str):
     epochs = range(1, len(history["train_loss"]) + 1)
@@ -29,6 +31,7 @@ def plot_training_curves(history: Dict[str, list], save_dir: str):
     with open(os.path.join(save_dir, "history.json"), "w") as f:
         json.dump(history, f, indent=4)
 
+
 def make_run_dir(cfg, hyp, base_dir="runs"):
     """
     Creates a deterministic run directory name from config and hyperparameters.
@@ -52,17 +55,30 @@ def make_run_dir(cfg, hyp, base_dir="runs"):
 
     return run_dir, exists
 
-def save_checkpoint(model, optimizer, epoch, best_acc, best_val_loss, history, run_dir, filename="checkpoint.pth"):
+
+def save_checkpoint(
+    model,
+    optimizer,
+    epoch,
+    best_acc,
+    best_val_loss,
+    history,
+    run_dir,
+    filename="checkpoint.pth",
+):
     """Save model, optimizer, and training history."""
     checkpoint_path = os.path.join(run_dir, filename)
-    torch.save({
-        "epoch": epoch,
-        "model_state": model.state_dict(),
-        "optimizer_state": optimizer.state_dict(),
-        "best_acc": best_acc,
-        "best_val_loss": best_val_loss,
-        "history": history,  # 👈 include training/test history
-    }, checkpoint_path)
+    torch.save(
+        {
+            "epoch": epoch,
+            "model_state": model.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "best_acc": best_acc,
+            "best_val_loss": best_val_loss,
+            "history": history,  # 👈 include training/test history
+        },
+        checkpoint_path,
+    )
     print(f"💾 Checkpoint saved at {checkpoint_path}")
 
 
@@ -78,11 +94,18 @@ def load_checkpoint(model, optimizer, run_dir):
         epoch = checkpoint.get("epoch", 0) + 1
         best_acc = checkpoint.get("best_acc", 0.0)
         best_val_loss = checkpoint.get("best_val_loss", float("inf"))
-        history = checkpoint.get("history", {"train_loss": [], "test_loss": [], "train_acc": [], "test_acc": []})
+        history = checkpoint.get(
+            "history",
+            {"train_loss": [], "test_loss": [], "train_acc": [], "test_acc": []},
+        )
 
         print(f"✅ Resumed from checkpoint (epoch {epoch - 1})")
         return epoch, best_acc, best_val_loss, history
 
     # Default values if no checkpoint exists
-    return 0, 0.0, float("inf"), {"train_loss": [], "test_loss": [], "train_acc": [], "test_acc": []}
-
+    return (
+        0,
+        0.0,
+        float("inf"),
+        {"train_loss": [], "test_loss": [], "train_acc": [], "test_acc": []},
+    )

@@ -422,8 +422,12 @@ def build_team_graphs_progressive(
         # Add metadata
         hetero_data.start_minute = torch.tensor(start_minute, dtype=torch.long)
         hetero_data.end_minute = torch.tensor(end_minute, dtype=torch.long)
-        hetero_data.current_home_goals = torch.tensor(current_home_goals, dtype=torch.long)
-        hetero_data.current_away_goals = torch.tensor(current_away_goals, dtype=torch.long)
+        hetero_data.current_home_goals = torch.tensor(
+            current_home_goals, dtype=torch.long
+        )
+        hetero_data.current_away_goals = torch.tensor(
+            current_away_goals, dtype=torch.long
+        )
         hetero_data.home_team = home_team
         hetero_data.away_team = away_team
 
@@ -590,7 +594,9 @@ class TemporalSoccerDataset(SoccerDataset):
                     if self.pre_transform:
                         sequence = self.pre_transform(sequence)
 
-                    torch.save(sequence, Path(self.processed_dir) / f"sequence_{idx}.pt")
+                    torch.save(
+                        sequence, Path(self.processed_dir) / f"sequence_{idx}.pt"
+                    )
                     idx += 1
 
     def get(self, idx) -> TemporalSequence:

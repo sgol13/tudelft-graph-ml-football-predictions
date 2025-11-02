@@ -89,7 +89,16 @@ class GAT(torch.nn.Module):
 
 class SpatialModel(torch.nn.Module):
     def __init__(
-        self, input_size=7, N1=128, N2=128, N3=64, N4=64, N5=16, L=16, num_classes=3, goal_information=False
+        self,
+        input_size=7,
+        N1=128,
+        N2=128,
+        N3=64,
+        N4=64,
+        N5=16,
+        L=16,
+        num_classes=3,
+        goal_information=False,
     ):
         super().__init__()
         self.gat = GAT(input_size, N1, N2, N3, N4, L)

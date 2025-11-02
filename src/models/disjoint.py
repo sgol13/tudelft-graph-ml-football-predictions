@@ -115,4 +115,4 @@ class DisjointModel(torch.nn.Module):
                 "away_goals_pred": self.goal_away_predicter(hidden[-1]),
             }
         else:
-            return {"class_logits" : self.classifier(hidden[-1])}
+            return {"class_logits": self.classifier(hidden[-1])}

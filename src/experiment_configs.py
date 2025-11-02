@@ -1,15 +1,18 @@
 from dataclasses import dataclass
-from typing import Callable, Dict, Any
+from typing import Any, Callable, Dict
 
 import torch
 
-from dataloader_paired import (CumulativeSoccerDataset, SoccerDataset,
-                               TemporalSoccerDataset)
+from criterion import build_criterion
+from dataloader_paired import (
+    CumulativeSoccerDataset,
+    SoccerDataset,
+    TemporalSoccerDataset,
+)
 from models.disjoint import DisjointModel
 from models.gat import SpatialModel
 from models.rnn import SimpleRNNModel
 from models.varma import VARMABaseline
-from criterion import build_criterion
 
 
 @dataclass
@@ -20,10 +23,13 @@ class ExperimentConfig:
     forward_pass: Callable[
         [torch.Tensor, torch.nn.Module, torch.device], tuple[torch.Tensor, torch.Tensor]
     ]
-    criterion: Callable[[Dict[str, torch.Tensor], torch.Tensor, torch.Tensor, torch.Tensor],torch.Tensor
+    criterion: Callable[
+        [Dict[str, torch.Tensor], torch.Tensor, torch.Tensor, torch.Tensor],
+        torch.Tensor,
     ]
     train_split: float = 0.8
     seed = 42
+
 
 @dataclass
 class Hyperparameters:
@@ -31,7 +37,7 @@ class Hyperparameters:
     batch_size: int
     learning_rate: float
     weight_decay: float
-    patience: int 
+    patience: int
     goal_information: bool
     alpha: float
     beta: float
@@ -233,12 +239,11 @@ def forward_pass_gat(batch, model, device):
         edge_col1=normalized_edge_weight1,
         edge_col2=normalized_edge_weight2,
     )
-    
 
     # y shape: (batch_size,)
     labels_y = batch.y.reshape(-1, 3).argmax(dim=1)
-    labels_home_goals = batch.final_home_goals.reshape(-1,1) # Necessary?
-    labels_away_goals = batch.final_away_goals.reshape(-1,1)
+    labels_home_goals = batch.final_home_goals.reshape(-1, 1)  # Necessary?
+    labels_away_goals = batch.final_away_goals.reshape(-1, 1)
 
     return out, labels_y, labels_home_goals, labels_away_goals
 
@@ -277,8 +282,12 @@ def forward_pass_disjoint(batch, model, device, percentage_of_match=0.8):
         for data in seq:
             for node_type in ["home", "away"]:
                 data[node_type].x = data[node_type].x.to(device)
-                data[node_type, "passes_to", node_type].edge_index = data[node_type, "passes_to", node_type].edge_index.to(device)
-                data[node_type, "passes_to", node_type].edge_weight = data[node_type, "passes_to", node_type].edge_weight.to(device)
+                data[node_type, "passes_to", node_type].edge_index = data[
+                    node_type, "passes_to", node_type
+                ].edge_index.to(device)
+                data[node_type, "passes_to", node_type].edge_weight = data[
+                    node_type, "passes_to", node_type
+                ].edge_weight.to(device)
 
     # Precompute global features on CPU first
     precomputed_features = []
@@ -312,8 +321,12 @@ def forward_pass_disjoint(batch, model, device, percentage_of_match=0.8):
             a_edge_weight = data["away", "passes_to", "away"].edge_weight
 
             # Batch assignments
-            h_batch = torch.full((h_nodes.size(0),), match_idx, device=device, dtype=torch.long)
-            a_batch = torch.full((a_nodes.size(0),), match_idx, device=device, dtype=torch.long)
+            h_batch = torch.full(
+                (h_nodes.size(0),), match_idx, device=device, dtype=torch.long
+            )
+            a_batch = torch.full(
+                (a_nodes.size(0),), match_idx, device=device, dtype=torch.long
+            )
 
             # Global features
             h_feat, a_feat = precomputed_features[match_idx][t]
@@ -364,57 +377,111 @@ def forward_pass_disjoint(batch, model, device, percentage_of_match=0.8):
     return out, labels_y, labels_home_goals, labels_away_goals
 
 
-
 # Define hyperparameters
 HYPERPARAMETERS = Hyperparameters(
     num_epochs=5,
     batch_size=32,
     learning_rate=5e-4,
     weight_decay=1e-5,
-    patience=5, 
+    patience=5,
     goal_information=True,
     alpha=1.0,
     beta=0.5,
     starting_year=2015,
     ending_year=2015,
-    time_interval=5
+    time_interval=5,
 )
 
 # Define multiple experiment setups here
 EXPERIMENTS = {
     "small": ExperimentConfig(
         name="small",
-        dataset_factory=lambda: CumulativeSoccerDataset(root="../data", ending_year=2015, time_interval=HYPERPARAMETERS.time_interval),
-        model=SpatialModel(input_size=4, L=6, goal_information=HYPERPARAMETERS.goal_information),
+        dataset_factory=lambda: CumulativeSoccerDataset(
+            root="../data",
+            ending_year=2015,
+            time_interval=HYPERPARAMETERS.time_interval,
+        ),
+        model=SpatialModel(
+            input_size=4, L=6, goal_information=HYPERPARAMETERS.goal_information
+        ),
         forward_pass=forward_pass_gat,
-        criterion=build_criterion(goal_information=HYPERPARAMETERS.goal_information, alpha=HYPERPARAMETERS.alpha, beta=HYPERPARAMETERS.beta)
+        criterion=build_criterion(
+            goal_information=HYPERPARAMETERS.goal_information,
+            alpha=HYPERPARAMETERS.alpha,
+            beta=HYPERPARAMETERS.beta,
+        ),
     ),
     "large": ExperimentConfig(
         name="large",
-        dataset_factory=lambda: CumulativeSoccerDataset(root="../data", starting_year=HYPERPARAMETERS.starting_year, ending_year=HYPERPARAMETERS.ending_year, time_interval=HYPERPARAMETERS.time_interval),
+        dataset_factory=lambda: CumulativeSoccerDataset(
+            root="../data",
+            starting_year=HYPERPARAMETERS.starting_year,
+            ending_year=HYPERPARAMETERS.ending_year,
+            time_interval=HYPERPARAMETERS.time_interval,
+        ),
         model=SpatialModel(input_size=4, L=6, goal_information=False),
         forward_pass=forward_pass_gat,
-        criterion=build_criterion(goal_information=False)
+        criterion=build_criterion(goal_information=False),
     ),
     "rnn": ExperimentConfig(
         name="rnn",
-        dataset_factory=lambda: TemporalSoccerDataset(root="../data", starting_year=HYPERPARAMETERS.starting_year, ending_year=HYPERPARAMETERS.ending_year, time_interval=HYPERPARAMETERS.time_interval),
-        model=SimpleRNNModel(input_size=6, hidden_size=64, num_layers=1, output_size=3, goal_information=HYPERPARAMETERS.goal_information),
+        dataset_factory=lambda: TemporalSoccerDataset(
+            root="../data",
+            starting_year=HYPERPARAMETERS.starting_year,
+            ending_year=HYPERPARAMETERS.ending_year,
+            time_interval=HYPERPARAMETERS.time_interval,
+        ),
+        model=SimpleRNNModel(
+            input_size=6,
+            hidden_size=64,
+            num_layers=1,
+            output_size=3,
+            goal_information=HYPERPARAMETERS.goal_information,
+        ),
         forward_pass=forward_pass_rnn,
-        criterion=build_criterion(goal_information=HYPERPARAMETERS.goal_information, alpha=HYPERPARAMETERS.alpha, beta=HYPERPARAMETERS.beta)
+        criterion=build_criterion(
+            goal_information=HYPERPARAMETERS.goal_information,
+            alpha=HYPERPARAMETERS.alpha,
+            beta=HYPERPARAMETERS.beta,
+        ),
     ),
     "varma": ExperimentConfig(
         name="varma",
-        dataset_factory=lambda: TemporalSoccerDataset(root="../data", starting_year=HYPERPARAMETERS.starting_year, ending_year=HYPERPARAMETERS.ending_year, time_interval=HYPERPARAMETERS.time_interval),
-        model=VARMABaseline(input_size=6, hidden_size=64, p=2, q=1, num_classes=3, goal_information=HYPERPARAMETERS.goal_information),
+        dataset_factory=lambda: TemporalSoccerDataset(
+            root="../data",
+            starting_year=HYPERPARAMETERS.starting_year,
+            ending_year=HYPERPARAMETERS.ending_year,
+            time_interval=HYPERPARAMETERS.time_interval,
+        ),
+        model=VARMABaseline(
+            input_size=6,
+            hidden_size=64,
+            p=2,
+            q=1,
+            num_classes=3,
+            goal_information=HYPERPARAMETERS.goal_information,
+        ),
         forward_pass=forward_pass_rnn,
-        criterion=build_criterion(goal_information=HYPERPARAMETERS.goal_information, alpha=HYPERPARAMETERS.alpha, beta=HYPERPARAMETERS.beta)
+        criterion=build_criterion(
+            goal_information=HYPERPARAMETERS.goal_information,
+            alpha=HYPERPARAMETERS.alpha,
+            beta=HYPERPARAMETERS.beta,
+        ),
     ),
     "disjoint": ExperimentConfig(
         name="disjoint",
-        dataset_factory=lambda: TemporalSoccerDataset(root="../data", starting_year=HYPERPARAMETERS.starting_year, ending_year=HYPERPARAMETERS.ending_year, time_interval=HYPERPARAMETERS.time_interval),
+        dataset_factory=lambda: TemporalSoccerDataset(
+            root="../data",
+            starting_year=HYPERPARAMETERS.starting_year,
+            ending_year=HYPERPARAMETERS.ending_year,
+            time_interval=HYPERPARAMETERS.time_interval,
+        ),
         model=DisjointModel(goal_information=HYPERPARAMETERS.goal_information),
         forward_pass=forward_pass_disjoint,
-        criterion=build_criterion(goal_information=HYPERPARAMETERS.goal_information, alpha=HYPERPARAMETERS.alpha, beta=HYPERPARAMETERS.beta)
+        criterion=build_criterion(
+            goal_information=HYPERPARAMETERS.goal_information,
+            alpha=HYPERPARAMETERS.alpha,
+            beta=HYPERPARAMETERS.beta,
+        ),
     ),
 }

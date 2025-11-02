@@ -1,37 +1,47 @@
+import json
+import os
 import pickle
 from collections import Counter, defaultdict
+from datetime import datetime
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
-import os
-import json
-from gat import DisjointModel
-from dataloader_paired import ProgressiveSoccerDataset, TemporalSequence
+import matplotlib.pyplot as plt
+import torch
 import torch.nn as nn
 import torch.optim as optim
+from gat import DisjointModel
 from torch.utils.data import DataLoader, Subset
-import torch
 from torch_geometric.data import Data, Dataset, HeteroData
 from tqdm import tqdm
-import matplotlib.pyplot as plt
-from datetime import datetime
+
+from dataloader_paired import ProgressiveSoccerDataset, TemporalSequence
+
 
 def create_empty_heterodata():
     """Create an empty HeteroData object for sequence padding."""
     empty = HeteroData()
-    
+
     # Create minimal graph structure to avoid errors
     empty["home"].x = torch.zeros((1, 4), dtype=torch.float)  # 1 node with 4 features
     empty["away"].x = torch.zeros((1, 4), dtype=torch.float)  # 1 node with 4 features
-    
+
     # Empty edges
-    empty["home", "passes_to", "home"].edge_index = torch.zeros((2, 0), dtype=torch.long)
-    empty["away", "passes_to", "away"].edge_index = torch.zeros((2, 0), dtype=torch.long)
-    
+    empty["home", "passes_to", "home"].edge_index = torch.zeros(
+        (2, 0), dtype=torch.long
+    )
+    empty["away", "passes_to", "away"].edge_index = torch.zeros(
+        (2, 0), dtype=torch.long
+    )
+
     # Empty edge weights
-    empty["home", "passes_to", "home"].edge_weight = torch.zeros((0,), dtype=torch.float)
-    empty["away", "passes_to", "away"].edge_weight = torch.zeros((0,), dtype=torch.float)
-    
+    empty["home", "passes_to", "home"].edge_weight = torch.zeros(
+        (0,), dtype=torch.float
+    )
+    empty["away", "passes_to", "away"].edge_weight = torch.zeros(
+        (0,), dtype=torch.float
+    )
+
     # Add dummy metadata to avoid attribute errors
     empty.y = torch.tensor([0, 0, 0], dtype=torch.float)  # Neutral label
     empty.start_minute = torch.tensor(-1, dtype=torch.long)  # Invalid time
@@ -39,8 +49,8 @@ def create_empty_heterodata():
     empty.current_home_goals = torch.tensor(-1, dtype=torch.long)
     empty.current_away_goals = torch.tensor(-1, dtype=torch.long)
 
-    
     return empty
+
 
 def extract_global_features(data: HeteroData):
 
@@ -100,8 +110,8 @@ def collate_fixed_windows(batch: List[TemporalSequence], window_size=5):
         padded_seq = padding + sequence.hetero_data_sequence
 
         for i in range(seq_len):
-            window = padded_seq[i:i + window_size]
-            
+            window = padded_seq[i : i + window_size]
+
             for timestep_idx, hetero in enumerate(window):
 
                 home_x = hetero["home"].x
@@ -115,19 +125,27 @@ def collate_fixed_windows(batch: List[TemporalSequence], window_size=5):
 
                 # ✅ VERIFICAR Y LIMPIAR NANs EN INPUTS
                 if torch.isnan(home_x).any():
-                    print(f"⚠️ NaN in home_x at sequence {sequence_idx}, timestep {timestep_idx}")
+                    print(
+                        f"⚠️ NaN in home_x at sequence {sequence_idx}, timestep {timestep_idx}"
+                    )
                     home_x = torch.nan_to_num(home_x, nan=0.0)
-                
+
                 if torch.isnan(away_x).any():
-                    print(f"⚠️ NaN in away_x at sequence {sequence_idx}, timestep {timestep_idx}")
+                    print(
+                        f"⚠️ NaN in away_x at sequence {sequence_idx}, timestep {timestep_idx}"
+                    )
                     away_x = torch.nan_to_num(away_x, nan=0.0)
-                
+
                 if torch.isnan(home_feat).any():
-                    print(f"⚠️ NaN in home_feat at sequence {sequence_idx}, timestep {timestep_idx}")
+                    print(
+                        f"⚠️ NaN in home_feat at sequence {sequence_idx}, timestep {timestep_idx}"
+                    )
                     home_feat = torch.nan_to_num(home_feat, nan=0.0)
-                
+
                 if torch.isnan(away_feat).any():
-                    print(f"⚠️ NaN in away_feat at sequence {sequence_idx}, timestep {timestep_idx}")
+                    print(
+                        f"⚠️ NaN in away_feat at sequence {sequence_idx}, timestep {timestep_idx}"
+                    )
                     away_feat = torch.nan_to_num(away_feat, nan=0.0)
 
                 home_batch = torch.full((home_x.size(0),), global_idx, dtype=torch.long)
@@ -151,7 +169,7 @@ def collate_fixed_windows(batch: List[TemporalSequence], window_size=5):
             global_idx += 1
 
     batch_size = len(labels_y)
-    
+
     x1_final = []
     x2_final = []
     edge1_final = []
@@ -191,27 +209,27 @@ def collate_fixed_windows(batch: List[TemporalSequence], window_size=5):
     # print(f"DEBUG: batch1_final[0] shape: {batch1_final[0].shape}, unique: {batch1_final[0].unique().shape[0]}")
 
     return {
-        'x1': x1_final,           # [window_size, total_nodes_home, features]
-        'x2': x2_final,           # [window_size, total_nodes_away, features]
-        'edge_index1': edge1_final, # [window_size, 2, total_edges_home]
-        'edge_index2': edge2_final, # [window_size, 2, total_edges_away]
-        'edge_weight1': edgew1_final, # [window_size, total_nodes_home]
-        'edge_weight2': edgew2_final, # [window_size, total_nodes_away]
-        'batch1': batch1_final,   # [window_size, total_nodes_home]
-        'batch2': batch2_final,   # [window_size, total_nodes_away]
-        'x_norm2_1': torch.stack(xnorm1_final),  # [window_size, batch_size, 6]
-        'x_norm2_2': torch.stack(xnorm2_final),  # [window_size, batch_size, 6]
-        'labels_y': torch.stack(labels_y),
-        'labels_home_goals': torch.stack(labels_home),
-        'labels_away_goals': torch.stack(labels_away),
-        'batch_size': batch_size,
-        'window_size': window_size
+        "x1": x1_final,  # [window_size, total_nodes_home, features]
+        "x2": x2_final,  # [window_size, total_nodes_away, features]
+        "edge_index1": edge1_final,  # [window_size, 2, total_edges_home]
+        "edge_index2": edge2_final,  # [window_size, 2, total_edges_away]
+        "edge_weight1": edgew1_final,  # [window_size, total_nodes_home]
+        "edge_weight2": edgew2_final,  # [window_size, total_nodes_away]
+        "batch1": batch1_final,  # [window_size, total_nodes_home]
+        "batch2": batch2_final,  # [window_size, total_nodes_away]
+        "x_norm2_1": torch.stack(xnorm1_final),  # [window_size, batch_size, 6]
+        "x_norm2_2": torch.stack(xnorm2_final),  # [window_size, batch_size, 6]
+        "labels_y": torch.stack(labels_y),
+        "labels_home_goals": torch.stack(labels_home),
+        "labels_away_goals": torch.stack(labels_away),
+        "batch_size": batch_size,
+        "window_size": window_size,
     }
 
-    
+
 def move_batch_to_device(batch, device):
     """Move all tensors (and nested lists of tensors) in a batch to the given device."""
-    
+
     def move_to_device(obj):
         if isinstance(obj, torch.Tensor):
             return obj.to(device)
@@ -221,19 +239,25 @@ def move_batch_to_device(batch, device):
             return {key: move_to_device(value) for key, value in obj.items()}
         else:
             return obj
-    
+
     return move_to_device(batch)
 
-def save_checkpoint(model, optimizer, epoch, best_acc, best_val_loss, run_dir, filename="checkpoint.pth"):
+
+def save_checkpoint(
+    model, optimizer, epoch, best_acc, best_val_loss, run_dir, filename="checkpoint.pth"
+):
     """Save model and optimizer state."""
     checkpoint_path = os.path.join(run_dir, filename)
-    torch.save({
-        'epoch': epoch,
-        'model_state': model.state_dict(),
-        'optimizer_state': optimizer.state_dict(),
-        'best_acc': best_acc,
-        'best_val_loss': best_val_loss,
-    }, checkpoint_path)
+    torch.save(
+        {
+            "epoch": epoch,
+            "model_state": model.state_dict(),
+            "optimizer_state": optimizer.state_dict(),
+            "best_acc": best_acc,
+            "best_val_loss": best_val_loss,
+        },
+        checkpoint_path,
+    )
     print(f"💾 Checkpoint saved at {checkpoint_path}")
 
 
@@ -242,12 +266,15 @@ def load_checkpoint(model, optimizer, run_dir):
     checkpoint_path = os.path.join(run_dir, "checkpoint.pth")
     if os.path.exists(checkpoint_path):
         checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
-        model.load_state_dict(checkpoint['model_state'])
-        optimizer.load_state_dict(checkpoint['optimizer_state'])
+        model.load_state_dict(checkpoint["model_state"])
+        optimizer.load_state_dict(checkpoint["optimizer_state"])
         print(f"✅ Resumed from checkpoint (epoch {checkpoint['epoch']})")
-        return checkpoint['epoch'] + 1, checkpoint['best_acc'], checkpoint['best_val_loss']
-    return 0, 0.0, float('inf')
-
+        return (
+            checkpoint["epoch"] + 1,
+            checkpoint["best_acc"],
+            checkpoint["best_val_loss"],
+        )
+    return 0, 0.0, float("inf")
 
 
 def train_one_epoch(model, dataloader, criterion, optimizer, device):
@@ -260,16 +287,24 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device):
         optimizer.zero_grad()
 
         outputs = model(
-            x1=batch['x1'], x2=batch['x2'],
-            edge_index1=batch['edge_index1'], edge_index2=batch['edge_index2'],
-            edge_weight1=batch['edge_weight1'], edge_weight2=batch['edge_weight2'],
-            batch1=batch['batch1'], batch2=batch['batch2'],
-            x_norm2_1=batch['x_norm2_1'], x_norm2_2=batch['x_norm2_2'],
-            batch_size=batch['batch_size'], window_size=batch['window_size']
+            x1=batch["x1"],
+            x2=batch["x2"],
+            edge_index1=batch["edge_index1"],
+            edge_index2=batch["edge_index2"],
+            edge_weight1=batch["edge_weight1"],
+            edge_weight2=batch["edge_weight2"],
+            batch1=batch["batch1"],
+            batch2=batch["batch2"],
+            x_norm2_1=batch["x_norm2_1"],
+            x_norm2_2=batch["x_norm2_2"],
+            batch_size=batch["batch_size"],
+            window_size=batch["window_size"],
         )
 
         # Safety checks
-        if torch.isnan(torch.tensor([p.detach().float().mean() for p in model.parameters()])).any():
+        if torch.isnan(
+            torch.tensor([p.detach().float().mean() for p in model.parameters()])
+        ).any():
             print(f"⚠️ NaN detected in model parameters at batch {batch_idx}")
             continue
 
@@ -277,7 +312,7 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device):
             loss = criterion(outputs, batch)
             pred_logits = outputs["class_logits"]
         else:
-            loss = criterion(outputs, batch['labels_y'])
+            loss = criterion(outputs, batch["labels_y"])
             pred_logits = outputs
 
         if torch.isnan(loss):
@@ -293,7 +328,7 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device):
 
         # Compute classification accuracy
         _, predicted = torch.max(pred_logits, 1)
-        _, labels = torch.max(batch['labels_y'], 1)
+        _, labels = torch.max(batch["labels_y"], 1)
         total_correct += (predicted == labels).sum().item()
         total_samples += labels.size(0)
 
@@ -302,6 +337,7 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device):
     acc = 100.0 * total_correct / total_samples if total_samples > 0 else 0.0
     avg_loss = total_loss / len(dataloader)
     return avg_loss, total_samples, total_correct, acc
+
 
 @torch.no_grad()
 def evaluate(model, dataloader, criterion, device):
@@ -313,25 +349,31 @@ def evaluate(model, dataloader, criterion, device):
         batch = move_batch_to_device(batch, device)
 
         outputs = model(
-            x1=batch['x1'], x2=batch['x2'],
-            edge_index1=batch['edge_index1'], edge_index2=batch['edge_index2'],
-            edge_weight1=batch['edge_weight1'], edge_weight2=batch['edge_weight2'],
-            batch1=batch['batch1'], batch2=batch['batch2'],
-            x_norm2_1=batch['x_norm2_1'], x_norm2_2=batch['x_norm2_2'],
-            batch_size=batch['batch_size'], window_size=batch['window_size']
+            x1=batch["x1"],
+            x2=batch["x2"],
+            edge_index1=batch["edge_index1"],
+            edge_index2=batch["edge_index2"],
+            edge_weight1=batch["edge_weight1"],
+            edge_weight2=batch["edge_weight2"],
+            batch1=batch["batch1"],
+            batch2=batch["batch2"],
+            x_norm2_1=batch["x_norm2_1"],
+            x_norm2_2=batch["x_norm2_2"],
+            batch_size=batch["batch_size"],
+            window_size=batch["window_size"],
         )
 
         if model.goal_information:
             loss = criterion(outputs, batch)
             pred_logits = outputs["class_logits"]
         else:
-            loss = criterion(outputs, batch['labels_y'])
+            loss = criterion(outputs, batch["labels_y"])
             pred_logits = outputs
 
         total_loss += loss.item()
 
         _, predicted = torch.max(pred_logits, 1)
-        _, labels = torch.max(batch['labels_y'], 1)
+        _, labels = torch.max(batch["labels_y"], 1)
         total_correct += (predicted == labels).sum().item()
         total_samples += labels.size(0)
 
@@ -343,6 +385,7 @@ def evaluate(model, dataloader, criterion, device):
 # ============================================================
 #                        LOSS WRAPPER
 # ============================================================
+
 
 def build_criterion(goal_information: bool, alpha: float = 1.0, beta: float = 0.5):
     """Return criterion callable with consistent signature."""
@@ -370,6 +413,7 @@ def build_criterion(goal_information: bool, alpha: float = 1.0, beta: float = 0.
 #                      PLOTTING UTILS
 # ============================================================
 
+
 def plot_training_curves(history: Dict[str, list], save_dir: str):
     epochs = range(1, len(history["train_loss"]) + 1)
     plt.figure(figsize=(10, 4))
@@ -393,10 +437,12 @@ def plot_training_curves(history: Dict[str, list], save_dir: str):
     with open(os.path.join(save_dir, "history.json"), "w") as f:
         json.dump(history, f, indent=4)
 
+
 import hashlib
 import json
 import os
 from datetime import datetime
+
 
 def make_run_dir(config, base_dir="runs"):
     """
@@ -415,7 +461,9 @@ def make_run_dir(config, base_dir="runs"):
     }
 
     # Hash to avoid excessively long names
-    hash_suffix = hashlib.md5(json.dumps(short_cfg, sort_keys=True).encode()).hexdigest()[:6]
+    hash_suffix = hashlib.md5(
+        json.dumps(short_cfg, sort_keys=True).encode()
+    ).hexdigest()[:6]
 
     run_name = (
         f"{short_cfg['model']}_ws{short_cfg['ws']}_lr{short_cfg['lr']}_"
@@ -426,6 +474,7 @@ def make_run_dir(config, base_dir="runs"):
     os.makedirs(run_dir, exist_ok=True)
     return run_dir
 
+
 def main():
     # === CONFIG ==========================================================
     config = {
@@ -434,7 +483,7 @@ def main():
         "batch_size": 32,
         "learning_rate": 1e-4,
         "weight_decay": 1e-5,
-        "patience": 5, 
+        "patience": 5,
         "goal_information": True,
         "alpha": 1.0,
         "beta": 0.5,
@@ -455,7 +504,16 @@ def main():
     print(f"Dataset size: {len(dataset)}")
 
     # Example split by season
-    train_seasons = ["epl_2015", "epl_2016", "epl_2017", "epl_2018", "epl_2019", "epl_2020", "epl_2021", "epl_2022"]
+    train_seasons = [
+        "epl_2015",
+        "epl_2016",
+        "epl_2017",
+        "epl_2018",
+        "epl_2019",
+        "epl_2020",
+        "epl_2021",
+        "epl_2022",
+    ]
     val_seasons = ["epl_2023"]
     test_seasons = ["epl_2024"]
 
@@ -468,9 +526,15 @@ def main():
 
     collate = lambda x: collate_fixed_windows(x, window_size=config["window_size"])
 
-    train_loader = DataLoader(train_dataset, batch_size=config["batch_size"], shuffle=True, collate_fn=collate)
-    val_loader = DataLoader(val_dataset, batch_size=config["batch_size"], shuffle=False, collate_fn=collate)
-    test_loader = DataLoader(test_dataset, batch_size=config["batch_size"], shuffle=False, collate_fn=collate)
+    train_loader = DataLoader(
+        train_dataset, batch_size=config["batch_size"], shuffle=True, collate_fn=collate
+    )
+    val_loader = DataLoader(
+        val_dataset, batch_size=config["batch_size"], shuffle=False, collate_fn=collate
+    )
+    test_loader = DataLoader(
+        test_dataset, batch_size=config["batch_size"], shuffle=False, collate_fn=collate
+    )
 
     # === MODEL ===========================================================
     model = DisjointModel(goal_information=config["goal_information"]).to(device)
@@ -512,7 +576,9 @@ def main():
     for epoch in range(start_epoch, config["num_epochs"]):
         print(f"\nEpoch {epoch+1}/{config['num_epochs']}")
 
-        train_loss, _, _, train_acc = train_one_epoch(model, train_loader, criterion, optimizer, device)
+        train_loss, _, _, train_acc = train_one_epoch(
+            model, train_loader, criterion, optimizer, device
+        )
         val_loss, _, _, val_acc = evaluate(model, val_loader, criterion, device)
 
         history["train_loss"].append(train_loss)
@@ -520,7 +586,9 @@ def main():
         history["train_acc"].append(train_acc)
         history["test_acc"].append(val_acc)
 
-        if not torch.isfinite(torch.tensor(train_loss)) or not torch.isfinite(torch.tensor(val_loss)):
+        if not torch.isfinite(torch.tensor(train_loss)) or not torch.isfinite(
+            torch.tensor(val_loss)
+        ):
             print(f"⚠️ Epoch {epoch}: Invalid loss, skipping...")
             continue
 
@@ -531,12 +599,16 @@ def main():
             print(f"🏆 New best model saved (val_loss={val_loss:.4f})")
         else:
             early_stopping_counter += 1
-            print(f"No improvement for {early_stopping_counter}/{config['patience']} epochs")
+            print(
+                f"No improvement for {early_stopping_counter}/{config['patience']} epochs"
+            )
 
         save_checkpoint(model, optimizer, epoch, best_acc, best_val_loss, run_dir)
 
-        print(f"Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, "
-              f"Train Acc: {train_acc:.2f}%, Val Acc: {val_acc:.2f}%")
+        print(
+            f"Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, "
+            f"Train Acc: {train_acc:.2f}%, Val Acc: {val_acc:.2f}%"
+        )
 
         if early_stopping_counter >= config["patience"]:
             print("🛑 Early stopping triggered.")

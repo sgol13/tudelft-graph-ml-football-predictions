@@ -12,8 +12,12 @@ from tqdm import tqdm
 from dataloader_paired import TemporalSoccerDataset
 from experiment_configs import EXPERIMENTS, HYPERPARAMETERS
 from result_metrics import evaluate_across_time, evaluate_rps
-from saving_results import (load_checkpoint, make_run_dir,
-                            plot_training_curves, save_checkpoint)
+from saving_results import (
+    load_checkpoint,
+    make_run_dir,
+    plot_training_curves,
+    save_checkpoint,
+)
 
 
 def group_indices_by_match(dataset):

@@ -1,6 +1,7 @@
+import matplotlib.pyplot as plt
 import torch
 from tqdm import tqdm
-import matplotlib.pyplot as plt
+
 
 def ranked_probability_score(pred_probs: torch.Tensor, true_onehot: torch.Tensor):
     """
@@ -15,6 +16,7 @@ def ranked_probability_score(pred_probs: torch.Tensor, true_onehot: torch.Tensor
     rps = torch.mean(torch.sum((F - O) ** 2, dim=1))  # mean over batch
     return rps.item()
 
+
 @torch.no_grad()
 def evaluate_rps(model, dataloader, device, forward_pass):
     model.eval()
@@ -23,9 +25,9 @@ def evaluate_rps(model, dataloader, device, forward_pass):
 
     for batch in dataloader:
         out, y, _, _ = forward_pass(batch, model, device)
-        
+
         probs = torch.softmax(out["class_logits"], dim=1)
-        
+
         all_preds.append(probs.cpu())
         all_labels.append(y.cpu())
 
@@ -34,11 +36,12 @@ def evaluate_rps(model, dataloader, device, forward_pass):
 
     # Convert labels to one-hot if needed
     num_classes = all_preds.shape[1]
-    labels_onehot = torch.nn.functional.one_hot(all_labels, num_classes=num_classes).float()
+    labels_onehot = torch.nn.functional.one_hot(
+        all_labels, num_classes=num_classes
+    ).float()
 
     rps_score = ranked_probability_score(all_preds, labels_onehot)
     print("RPS:", rps_score)
-
 
 
 @torch.no_grad()
@@ -53,14 +56,13 @@ def evaluate_across_time(model, dataloader, device, forward_pass, run_dir):
         preds = out["class_logits"].argmax(dim=1)
 
         # 🔹 obtener end_minute directamente del batch
-        end_minutes = [
-            seq[-1].end_minute.item()
-            for seq in batch["sequences"]
-        ]
+        end_minutes = [seq[-1].end_minute.item() for seq in batch["sequences"]]
 
         for pred, label, end_min in zip(preds, y, end_minutes):
             end_min = int(end_min)
-            correct_by_minute[end_min] = correct_by_minute.get(end_min, 0) + (pred == label).item()
+            correct_by_minute[end_min] = (
+                correct_by_minute.get(end_min, 0) + (pred == label).item()
+            )
             total_by_minute[end_min] = total_by_minute.get(end_min, 0) + 1
 
     # calcular accuracy por minuto
@@ -69,15 +71,12 @@ def evaluate_across_time(model, dataloader, device, forward_pass, run_dir):
         for m in sorted(total_by_minute.keys())
     }
 
-
-
-    plt.plot(list(accuracy_by_minute.keys()), list(accuracy_by_minute.values()), marker="o")
+    plt.plot(
+        list(accuracy_by_minute.keys()), list(accuracy_by_minute.values()), marker="o"
+    )
     plt.xlabel("End minute")
     plt.ylabel("Accuracy (%)")
     plt.title("Accuracy vs Time Frame")
     plt.savefig(f"{run_dir}/accuracy_across_time.png")
 
     return accuracy_by_minute
-
-
-

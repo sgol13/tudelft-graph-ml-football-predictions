@@ -1,22 +1,28 @@
-import torch.nn as nn
+from typing import Any, Dict, List
+
 import torch
-from typing import List, Dict, Any
+import torch.nn as nn
 
 
-def build_criterion(goal_information: bool,  alpha: float = 1.0, beta: float = 0.5):
+def build_criterion(goal_information: bool, alpha: float = 1.0, beta: float = 0.5):
     """Return criterion callable with consistent signature."""
 
     if not goal_information:
         ce = nn.CrossEntropyLoss()
-        return lambda outputs, labels_y, labels_home_goals, labels_away_goals: ce(outputs["class_logits"], labels_y)
-
+        return lambda outputs, labels_y, labels_home_goals, labels_away_goals: ce(
+            outputs["class_logits"], labels_y
+        )
 
     ce = nn.CrossEntropyLoss()
     poisson = nn.PoissonNLLLoss(log_input=False)
     eps = 1e-6
 
-
-    def compute_loss(outputs: Dict[str, torch.Tensor], labels_y: torch.Tensor, labels_home_goals: torch.Tensor, labels_away_goals: torch.Tensor):
+    def compute_loss(
+        outputs: Dict[str, torch.Tensor],
+        labels_y: torch.Tensor,
+        labels_home_goals: torch.Tensor,
+        labels_away_goals: torch.Tensor,
+    ):
         loss_cls = ce(outputs["class_logits"], labels_y)
         home_pred = outputs["home_goals_pred"].clamp_min(eps).squeeze()
         away_pred = outputs["away_goals_pred"].clamp_min(eps).squeeze()
