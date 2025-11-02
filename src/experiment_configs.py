@@ -4,8 +4,11 @@ from typing import Callable, Dict
 import torch
 
 from criterion import build_criterion
-from dataloader_paired import (CumulativeSoccerDataset, SoccerDataset,
-                               TemporalSoccerDataset)
+from dataloader_paired import (
+    CumulativeSoccerDataset,
+    SoccerDataset,
+    TemporalSoccerDataset,
+)
 from models.disjoint import DisjointModel
 from models.gat import SpatialModel
 from models.rnn import SimpleRNNModel
@@ -152,96 +155,48 @@ def extract_global_feature_from_match(data, device):
     return home_features, away_features
 
 
-def extract_global_features(batch, batch_size, device):
-    """
-    Extract global features from batch metadata for each graph.
-    Features include: time info and current score.
-    """
-    x_norm_home = []
-    x_norm_away = []
-
-    for i in range(batch_size):
-        # Extract metadata for this graph
-        start_min = batch.start_minute[i].float()
-        end_min = batch.end_minute[i].float()
-        curr_home_goals = batch.current_home_goals[i].float()
-        curr_away_goals = batch.current_away_goals[i].float()
-
-        # Create feature vector for HOME team perspective
-        home_features = torch.tensor(
-            [
-                start_min / 90.0,  # Normalized start time
-                end_min / 90.0,  # Normalized end time
-                curr_home_goals,  # Current home goals
-                curr_away_goals,  # Current away goals
-                curr_home_goals - curr_away_goals,  # Goal difference (home perspective)
-                (curr_home_goals + curr_away_goals),  # Total goals so far
-            ],
-            device=device,
-        )
-
-        # Create feature vector for AWAY team perspective
-        away_features = torch.tensor(
-            [
-                start_min / 90.0,  # Normalized start time
-                end_min / 90.0,  # Normalized end time
-                curr_away_goals,  # Current away goals (their perspective)
-                curr_home_goals,  # Current home goals (opponent)
-                curr_away_goals - curr_home_goals,  # Goal difference (away perspective)
-                (curr_home_goals + curr_away_goals),  # Total goals so far
-            ],
-            device=device,
-        )
-
-        x_norm_home.append(home_features)
-        x_norm_away.append(away_features)
-
-    return torch.stack(x_norm_home), torch.stack(x_norm_away)
-
-
-def forward_pass_gat(batch, model, device):
-    batch = batch.to(device)
+def forward_pass_gat(entry, model, device):
+    entry = entry.to(device)
     # Extract data from HeteroData structure
-    x1 = batch["home"].x
-    x2 = batch["away"].x
-    edge_index1 = batch["home", "passes_to", "home"].edge_index
-    edge_index2 = batch["away", "passes_to", "away"].edge_index
-
-    # Get batch indices for each node type
-    batch_idx1 = batch["home"].batch
-    batch_idx2 = batch["away"].batch
-
-    # Get batch size (number of graphs in this batch)
-    batch_size = batch_idx1.max().item() + 1
+    x1 = entry["home"].x
+    x2 = entry["away"].x
+    edge_index1 = entry["home", "passes_to", "home"].edge_index
+    edge_index2 = entry["away", "passes_to", "away"].edge_index
 
     # Edge weights
-    edge_weight1 = batch["home", "passes_to", "home"].edge_weight
-    edge_weight2 = batch["away", "passes_to", "away"].edge_weight
+    edge_weight1 = entry["home", "passes_to", "home"].edge_weight
+    edge_weight2 = entry["away", "passes_to", "away"].edge_weight
 
-    normalized_edge_weight1 = edge_weight1 / (edge_weight1.max() + 1e-8)
-    normalized_edge_weight2 = edge_weight2 / (edge_weight2.max() + 1e-8)
+    normalized_edge_weight1 = (
+        edge_weight1 / (edge_weight1.max() + 1e-8)
+        if edge_weight1.numel() > 0
+        else torch.zeros(edge_weight1.size(), device=device)
+    )
+    normalized_edge_weight2 = (
+        edge_weight2 / (edge_weight2.max() + 1e-8)
+        if edge_weight2.numel() > 0
+        else torch.zeros(edge_weight2.size(), device=device)
+    )
 
     # Extract global features from metadata
-    x_norm2_1, x_norm2_2 = extract_global_features(batch, batch_size, device)
+    x_norm2_1, x_norm2_2 = extract_global_feature_from_match(entry, device)
 
-    # out shape: (batch_size, 3)
+    # out shape: (3,)
     out = model(
         x1=x1,
         x2=x2,
         edge_index1=edge_index1,
         edge_index2=edge_index2,
-        batch1=batch_idx1,
-        batch2=batch_idx2,
         x_norm2_1=x_norm2_1,
         x_norm2_2=x_norm2_2,
         edge_col1=normalized_edge_weight1,
         edge_col2=normalized_edge_weight2,
     )
 
-    # y shape: (batch_size,)
-    labels_y = batch.y.reshape(-1, 3).argmax(dim=1)
-    labels_home_goals = batch.final_home_goals.reshape(-1, 1)  # Necessary?
-    labels_away_goals = batch.final_away_goals.reshape(-1, 1)
+    # y shape: (1,)
+    labels_y = entry.y.reshape(-1, 3).argmax(dim=1)
+    labels_home_goals = entry.final_home_goals.reshape(-1, 1)  # Necessary?
+    labels_away_goals = entry.final_away_goals.reshape(-1, 1)
 
     return out, labels_y, labels_home_goals, labels_away_goals
 

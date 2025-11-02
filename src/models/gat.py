@@ -1,7 +1,7 @@
 import torch
 import torch.nn.functional as F
 from torch.nn import ELU, Linear
-from torch_geometric.nn import GATConv, global_mean_pool
+from torch_geometric.nn import GATConv
 
 
 class GoalPredictor(torch.nn.Module):
@@ -45,41 +45,28 @@ class GAT(torch.nn.Module):
         x2,
         edge_index1,
         edge_index2,
-        batch1,
-        batch2,
         x_norm2_1,
         x_norm2_2,
         edge_col1=None,
         edge_col2=None,
     ):
-        # 1. Obtain node embeddings
-        x1 = self.elu(self.conv1(x1, edge_index1, edge_col1))
-        x1 = F.dropout(x1, p=0.2, training=self.training)
+        def process_graph(x, edge_index, edge_attr):
+            x = self.elu(self.conv1(x, edge_index, edge_attr))
+            x = F.dropout(x, p=0.2, training=self.training)
+            x = self.elu(self.conv2(x, edge_index, edge_attr))
+            x = F.dropout(x, p=0.2, training=self.training)
+            x = self.elu(self.conv3(x, edge_index, edge_attr))
+            x = F.dropout(x, p=0.2, training=self.training)
+            x = x.mean(dim=0)
+            return x
 
-        x1 = self.elu(self.conv2(x1, edge_index1, edge_col1))
-        x1 = F.dropout(x1, p=0.2, training=self.training)
-
-        x1 = self.elu(self.conv3(x1, edge_index1, edge_col1))
-        x1 = F.dropout(x1, p=0.2, training=self.training)
-
-        x2 = self.elu(self.conv1(x2, edge_index2, edge_col2))
-        x2 = F.dropout(x2, p=0.2, training=self.training)
-
-        x2 = self.elu(self.conv2(x2, edge_index2, edge_col2))
-        x2 = F.dropout(x2, p=0.2, training=self.training)
-
-        x2 = self.elu(self.conv3(x2, edge_index2, edge_col2))
-        x2 = F.dropout(x2, p=0.2, training=self.training)
-
-        # 2. Readout layer
-        # Two batches since graphs don't necessarily have the same number of nodes
-        x1 = global_mean_pool(x1, batch1)
-        x2 = global_mean_pool(x2, batch2)
+        x1 = process_graph(x1, edge_index1, edge_col1)
+        x2 = process_graph(x2, edge_index2, edge_col2)
 
         if x_norm2_1 is not None:
-            x1 = torch.cat((x1, x_norm2_1), dim=1)
+            x1 = torch.cat((x1, x_norm2_1))
         if x_norm2_2 is not None:
-            x2 = torch.cat((x2, x_norm2_2), dim=1)
+            x2 = torch.cat((x2, x_norm2_2))
 
         x1 = self.lin(x1)
         x2 = self.lin(x2)
@@ -115,8 +102,6 @@ class SpatialModel(torch.nn.Module):
         x2,
         edge_index1,
         edge_index2,
-        batch1,
-        batch2,
         x_norm2_1,
         x_norm2_2,
         edge_col1=None,
@@ -127,21 +112,19 @@ class SpatialModel(torch.nn.Module):
             x2,
             edge_index1,
             edge_index2,
-            batch1,
-            batch2,
             x_norm2_1,
             x_norm2_2,
             edge_col1,
             edge_col2,
         )
-        x = torch.cat((x1, x2), dim=1)  # x has both graph embeddings
+        x = torch.cat((x1, x2))
         # For the Disjoint Model, we want this x as output of each GAT
 
         if self.goal_information:
             return {
-                "class_logits": self.classifier(x),
-                "home_goals_pred": self.goal_home_predicter(x),
-                "away_goals_pred": self.goal_away_predicter(x),
+                "class_logits": self.classifier(x).unsqueeze(0),
+                "home_goals_pred": self.goal_home_predicter(x).unsqueeze(0),
+                "away_goals_pred": self.goal_away_predicter(x).unsqueeze(0),
             }
         else:
-            return {"class_logits": self.classifier(x)}
+            return {"class_logits": self.classifier(x).unsqueeze(0)}
