@@ -26,7 +26,7 @@ def group_indices_by_match(dataset):
 
 
 def split_by_match(dataset, train_ratio=0.7, seed=42):
-    val_ratio = 1 - train_ratio / 2
+    val_ratio = (1 - train_ratio) / 2
     random.seed(seed)
     match_to_indices = group_indices_by_match(dataset)
 
@@ -189,8 +189,8 @@ def main():
             )
 
             print(
-                f"Train Loss: {train_loss:.4f}, Val Loss: {test_loss:.4f}, "
-                f"Train Acc: {train_acc:.2f}%, Val Acc: {test_acc:.2f}%"
+                f"Train Loss: {train_loss:.4f}, Test Loss: {test_loss:.4f}, "
+                f"Train Acc: {train_acc:.2f}%, Test Acc: {test_acc:.2f}%"
             )
 
             if early_stopping_counter >= hyp.patience:
