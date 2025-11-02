@@ -4,11 +4,8 @@ from typing import Callable, Dict
 import torch
 
 from criterion import build_criterion
-from dataloader_paired import (
-    CumulativeSoccerDataset,
-    SoccerDataset,
-    TemporalSoccerDataset,
-)
+from dataloader_paired import (CumulativeSoccerDataset, SoccerDataset,
+                               TemporalSoccerDataset)
 from models.disjoint import DisjointModel
 from models.gat import SpatialModel
 from models.rnn import SimpleRNNModel
@@ -69,12 +66,8 @@ def forward_pass_rnn(entry: TemporalSequence, model, device, percentage_of_match
         away_nodes = data["away"].x.size(0)
         home_unique_passes = data["home", "passes_to", "home"].edge_index.size(1)
         away_unique_passes = data["away", "passes_to", "away"].edge_index.size(1)
-        home_total_passes = (
-            data["home", "passes_to", "home"].edge_weight.sum().item()
-        )
-        away_total_passes = (
-            data["away", "passes_to", "away"].edge_weight.sum().item()
-        )
+        home_total_passes = data["home", "passes_to", "home"].edge_weight.sum().item()
+        away_total_passes = data["away", "passes_to", "away"].edge_weight.sum().item()
 
         features = torch.tensor(
             [
@@ -179,7 +172,9 @@ def forward_pass_gat(entry, model, device):
     return out, labels_y, labels_home_goals, labels_away_goals
 
 
-def forward_pass_disjoint(batch, model, device, percentage_of_match=0.8):
+def forward_pass_disjoint(
+    entry: TemporalSequence, model: DisjointModel, device, percentage_of_match=0.8
+):
     """
     batch: dict with keys 'sequences', 'labels', 'metadata'
     sequences: list of HeteroData sequences (length = batch_size)
@@ -192,103 +187,50 @@ def forward_pass_disjoint(batch, model, device, percentage_of_match=0.8):
     - x_norm2_1, x_norm2_2: lists of global features per timestep [window_size] each containing [batch_size, 6]
     - batch_size, window_size: integers
     """
-    sequences = batch["sequences"]
-    labels_y = batch["labels"].to(device).argmax(dim=1)
-    labels_home_goals = batch["metadata"]["final_home_goals"].to(device)
-    labels_away_goals = batch["metadata"]["final_away_goals"].to(device)
-    batch_size = len(sequences)
+    sequence = entry.hetero_data_sequence
+    labels_y = entry.y.to(device).argmax(dim=0).unsqueeze(0)
+    labels_home_goals = entry.final_home_goals.to(device).unsqueeze(0)
+    labels_away_goals = entry.final_away_goals.to(device).unsqueeze(0)
 
     # Determine window size (number of timeframes to use)
-    window_size = max(1, int(percentage_of_match * len(sequences[0])))
+    window_size = max(1, int(percentage_of_match * len(sequence)))
 
-    # Preallocate lists
     x1_list, x2_list = [], []
     edge_index1_list, edge_index2_list = [], []
     edge_weight1_list, edge_weight2_list = [], []
-    batch1_list, batch2_list = [], []
     x_norm2_1_list, x_norm2_2_list = [], []
-
-    # Move all HeteroData to device first (avoid repeated .to(device) calls)
-    for seq in sequences:
-        for data in seq:
-            for node_type in ["home", "away"]:
-                data[node_type].x = data[node_type].x.to(device)
-                data[node_type, "passes_to", node_type].edge_index = data[
-                    node_type, "passes_to", node_type
-                ].edge_index.to(device)
-                data[node_type, "passes_to", node_type].edge_weight = data[
-                    node_type, "passes_to", node_type
-                ].edge_weight.to(device)
-
-    # Precompute global features on CPU first
-    precomputed_features = []
-    for match_sequence in sequences:
-        match_features = []
-        for data in match_sequence[:window_size]:
-            match_features.append(extract_global_feature_from_match(data, device))
-        precomputed_features.append(match_features)
 
     # Process each timestep
     for t in range(window_size):
-        timestep_x1, timestep_x2 = [], []
-        timestep_edge_index1, timestep_edge_index2 = [], []
-        timestep_edge_weight1, timestep_edge_weight2 = [], []
-        timestep_batch1, timestep_batch2 = [], []
-        timestep_global_home, timestep_global_away = [], []
+        timeframe = sequence[t].to(device)
+        # Extract data from HeteroData structure
+        x1_list.append(timeframe["home"].x)
+        x2_list.append(timeframe["away"].x)
+        edge_index1_list.append(timeframe["home", "passes_to", "home"].edge_index)
+        edge_index2_list.append(timeframe["away", "passes_to", "away"].edge_index)
 
-        home_offset, away_offset = 0, 0
+        # Edge weights
+        edge_weight1 = timeframe["home", "passes_to", "home"].edge_weight
+        edge_weight2 = timeframe["away", "passes_to", "away"].edge_weight
 
-        for match_idx, match_sequence in enumerate(sequences):
-            data = match_sequence[t] if t < len(match_sequence) else match_sequence[-1]
+        normalized_edge_weight1 = (
+            edge_weight1 / (edge_weight1.max() + 1e-8)
+            if edge_weight1.numel() > 0
+            else torch.zeros(edge_weight1.size(), device=device)
+        )
+        normalized_edge_weight2 = (
+            edge_weight2 / (edge_weight2.max() + 1e-8)
+            if edge_weight2.numel() > 0
+            else torch.zeros(edge_weight2.size(), device=device)
+        )
 
-            # Node features
-            h_nodes = data["home"].x
-            a_nodes = data["away"].x
+        edge_weight1_list.append(normalized_edge_weight1)
+        edge_weight2_list.append(normalized_edge_weight2)
 
-            # Edges
-            h_edge_index = data["home", "passes_to", "home"].edge_index + home_offset
-            a_edge_index = data["away", "passes_to", "away"].edge_index + away_offset
-            h_edge_weight = data["home", "passes_to", "home"].edge_weight
-            a_edge_weight = data["away", "passes_to", "away"].edge_weight
-
-            # Batch assignments
-            h_batch = torch.full(
-                (h_nodes.size(0),), match_idx, device=device, dtype=torch.long
-            )
-            a_batch = torch.full(
-                (a_nodes.size(0),), match_idx, device=device, dtype=torch.long
-            )
-
-            # Global features
-            h_feat, a_feat = precomputed_features[match_idx][t]
-
-            # Append to timestep lists
-            timestep_x1.append(h_nodes)
-            timestep_x2.append(a_nodes)
-            timestep_edge_index1.append(h_edge_index)
-            timestep_edge_index2.append(a_edge_index)
-            timestep_edge_weight1.append(h_edge_weight)
-            timestep_edge_weight2.append(a_edge_weight)
-            timestep_batch1.append(h_batch)
-            timestep_batch2.append(a_batch)
-            timestep_global_home.append(h_feat)
-            timestep_global_away.append(a_feat)
-
-            # Update offsets
-            home_offset += h_nodes.size(0)
-            away_offset += a_nodes.size(0)
-
-        # Concatenate once per timestep
-        x1_list.append(torch.cat(timestep_x1, dim=0))
-        x2_list.append(torch.cat(timestep_x2, dim=0))
-        edge_index1_list.append(torch.cat(timestep_edge_index1, dim=1))
-        edge_index2_list.append(torch.cat(timestep_edge_index2, dim=1))
-        edge_weight1_list.append(torch.cat(timestep_edge_weight1, dim=0))
-        edge_weight2_list.append(torch.cat(timestep_edge_weight2, dim=0))
-        batch1_list.append(torch.cat(timestep_batch1, dim=0))
-        batch2_list.append(torch.cat(timestep_batch2, dim=0))
-        x_norm2_1_list.append(torch.stack(timestep_global_home, dim=0))
-        x_norm2_2_list.append(torch.stack(timestep_global_away, dim=0))
+        # Extract global features from metadata
+        x_norm2_1, x_norm2_2 = extract_global_feature_from_match(timeframe, device)
+        x_norm2_1_list.append(x_norm2_1)
+        x_norm2_2_list.append(x_norm2_2)
 
     out = model(
         x1=x1_list,
@@ -297,11 +239,8 @@ def forward_pass_disjoint(batch, model, device, percentage_of_match=0.8):
         edge_index2=edge_index2_list,
         edge_weight1=edge_weight1_list,
         edge_weight2=edge_weight2_list,
-        batch1=batch1_list,
-        batch2=batch2_list,
         x_norm2_1=x_norm2_1_list,
         x_norm2_2=x_norm2_2_list,
-        batch_size=batch_size,
         window_size=window_size,
     )
 

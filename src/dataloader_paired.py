@@ -577,9 +577,7 @@ class TemporalSoccerDataset(SoccerDataset):
 
                 # Get entire temporal sequence for this match
                 try:
-                    sequence = self._process_match(
-                        events, home_team, away_team
-                    )
+                    sequence = self._process_match(events, home_team, away_team)
                 except Exception:
                     continue
 
@@ -592,9 +590,7 @@ class TemporalSoccerDataset(SoccerDataset):
                 if self.pre_transform:
                     sequence = self.pre_transform(sequence)
 
-                torch.save(
-                    sequence, Path(self.processed_dir) / f"sequence_{idx}.pt"
-                )
+                torch.save(sequence, Path(self.processed_dir) / f"sequence_{idx}.pt")
                 idx += 1
 
     def get(self, idx) -> TemporalSequence:
