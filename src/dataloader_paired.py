@@ -199,7 +199,11 @@ def build_graph(
 def build_team_graphs_with_goals(
     events, home_team: str, away_team: str, time_interval=5, cumulative=False
 ) -> List[HeteroData]:
-    """Build paired graphs with both home and away teams for each time interval."""
+    """Build paired graphs with both home and away teams for each time interval.
+
+    cumulative: if True, pass counts are accumulated across intervals,
+                but node indices are recalculated per interval to avoid index inflation.
+    """
     if events.empty or "minute" not in events.columns:
         return []
 
@@ -212,12 +216,12 @@ def build_team_graphs_with_goals(
 
     paired_graphs = []
 
+    # Cumulative storage
     cumulative_pass_counts = defaultdict(Counter)
     cumulative_team_players = defaultdict(set)
     cumulative_player_positions = defaultdict(lambda: defaultdict(list))
 
-    # Iterate over time intervals
-    for start_minute in range(0, int(max_minute), time_interval):
+    for start_minute in range(0, int(max_minute) + 1, time_interval):
         end_minute = min(start_minute + time_interval, int(max_minute) + 1)
         events_in_interval = events[
             (events["minute"] >= start_minute)
@@ -225,16 +229,12 @@ def build_team_graphs_with_goals(
             & (~events["type"].isin(["Start", "End", "FormationSet"]))
         ]
 
-        # Count goals up to current interval
-        current_home_goals, current_away_goals = count_goals(
-            events, end_minute, home_team, away_team
-        )
-
-        # Process HOME team
+        # --- HOME TEAM ---
         home_events = events_in_interval[events_in_interval["team"] == home_team]
         home_pass_counts, home_positions, home_players = count_passes(home_events)
 
         if cumulative and home_pass_counts:
+            # Add to cumulative
             for (i, j), count in home_pass_counts.items():
                 p_from = home_players[i]
                 p_to = home_players[j]
@@ -242,48 +242,33 @@ def build_team_graphs_with_goals(
             cumulative_team_players[home_team].update(home_players)
             home_players = sorted(list(cumulative_team_players[home_team]))
             player_to_idx = {p: i for i, p in enumerate(home_players)}
+            # Remap cumulative edges to new indices
             home_pass_counts = Counter(
                 {
-                    (player_to_idx[i], player_to_idx[j]): count
-                    for (i, j), count in cumulative_pass_counts[home_team].items()
+                    (player_to_idx[i], player_to_idx[j]): c
+                    for (i, j), c in cumulative_pass_counts[home_team].items()
                     if i in player_to_idx and j in player_to_idx
                 }
             )
-
-            # Save positions up to current interval
-            for player, position in home_positions.items():
-                if player in cumulative_player_positions[home_team]:
-                    cumulative_player_positions[home_team][player].append(position)
+            # Update cumulative positions
+            for player, pos in home_positions.items():
+                cumulative_player_positions[home_team][player].append(pos)
+            # Mean positions
+            current_positions = {}
+            for player, pos_list in cumulative_player_positions[home_team].items():
+                valid_pos = [p for p in pos_list if p[2] == 1.0]
+                if valid_pos:
+                    mean_x = np.mean([p[0] for p in valid_pos])
+                    mean_y = np.mean([p[1] for p in valid_pos])
+                    is_valid = 1.0
                 else:
-                    cumulative_player_positions[home_team][player] = [position]
-
-            # Calculate MEAN of cumulative positions up to current interval
-            current_cumulative_positions = {}
-            for player, positions_list in cumulative_player_positions[
-                home_team
-            ].items():
-                if positions_list:
-                    valid_positions = [
-                        pos for pos in positions_list if pos[2] == 1.0
-                    ]  # Only use valid ones
-                    if valid_positions:
-                        mean_x = np.mean([pos[0] for pos in valid_positions])
-                        mean_y = np.mean([pos[1] for pos in valid_positions])
-                        is_valid = 1.0
-                    else:
-                        mean_x, mean_y = 50.0, 50.0
-                        is_valid = 0.0
-                else:
-                    mean_x, mean_y = 50.0, 50.0
-                    is_valid = 0.0
-
-                current_cumulative_positions[player] = (mean_x, mean_y, is_valid)
-
-            home_positions = current_cumulative_positions
+                    mean_x, mean_y, is_valid = 50.0, 50.0, 0.0
+                current_positions[player] = (mean_x, mean_y, is_valid)
+            home_positions = current_positions
 
         home_graph = build_graph(home_pass_counts, home_positions, home_players)
 
-        # Process AWAY team
+        # --- AWAY TEAM ---
         away_events = events_in_interval[events_in_interval["team"] == away_team]
         away_pass_counts, away_positions, away_players = count_passes(away_events)
 
@@ -297,69 +282,46 @@ def build_team_graphs_with_goals(
             player_to_idx = {p: i for i, p in enumerate(away_players)}
             away_pass_counts = Counter(
                 {
-                    (player_to_idx[i], player_to_idx[j]): count
-                    for (i, j), count in cumulative_pass_counts[away_team].items()
+                    (player_to_idx[i], player_to_idx[j]): c
+                    for (i, j), c in cumulative_pass_counts[away_team].items()
                     if i in player_to_idx and j in player_to_idx
                 }
             )
-
-            # Save positions up to current interval
-            for player, position in away_positions.items():
-                # position is (x, y, is_valid)
-                if player in cumulative_player_positions[away_team]:
-                    cumulative_player_positions[away_team][player].append(position)
+            for player, pos in away_positions.items():
+                cumulative_player_positions[away_team][player].append(pos)
+            current_positions = {}
+            for player, pos_list in cumulative_player_positions[away_team].items():
+                valid_pos = [p for p in pos_list if p[2] == 1.0]
+                if valid_pos:
+                    mean_x = np.mean([p[0] for p in valid_pos])
+                    mean_y = np.mean([p[1] for p in valid_pos])
+                    is_valid = 1.0
                 else:
-                    cumulative_player_positions[away_team][player] = [position]
-
-            # Calculate MEAN of cumulative positions up to current interval
-            current_cumulative_positions = {}
-            for player, positions_list in cumulative_player_positions[
-                away_team
-            ].items():
-                if positions_list:
-                    # Only average if we have valid positions
-                    valid_positions = [
-                        pos for pos in positions_list if pos[2] == 1.0
-                    ]  # Only use valid ones
-                    if valid_positions:
-                        mean_x = np.mean([pos[0] for pos in valid_positions])
-                        mean_y = np.mean([pos[1] for pos in valid_positions])
-                        is_valid = 1.0
-                    else:
-                        mean_x, mean_y = 50.0, 50.0
-                        is_valid = 0.0
-                else:
-                    mean_x, mean_y = 50.0, 50.0
-                    is_valid = 0.0
-
-                current_cumulative_positions[player] = (mean_x, mean_y, is_valid)
-
-            away_positions = current_cumulative_positions
+                    mean_x, mean_y, is_valid = 50.0, 50.0, 0.0
+                current_positions[player] = (mean_x, mean_y, is_valid)
+            away_positions = current_positions
 
         away_graph = build_graph(away_pass_counts, away_positions, away_players)
 
-        # Create HeteroData with separate node types for home/away
+        # --- Create HeteroData ---
         hetero_data = HeteroData()
-
-        # Home team graph
         hetero_data["home"].x = home_graph.x
         hetero_data["home", "passes_to", "home"].edge_index = home_graph.edge_index
         hetero_data["home", "passes_to", "home"].edge_weight = home_graph.edge_weight
 
-        # Away team graph
         hetero_data["away"].x = away_graph.x
         hetero_data["away", "passes_to", "away"].edge_index = away_graph.edge_index
         hetero_data["away", "passes_to", "away"].edge_weight = away_graph.edge_weight
 
-        # Metadata (stored as attributes on the HeteroData object)
+        # Metadata
         hetero_data.start_minute = torch.tensor(start_minute, dtype=torch.long)
         hetero_data.end_minute = torch.tensor(end_minute, dtype=torch.long)
-        hetero_data.y = final_result_onehot  # Keep as one-hot for now
+        hetero_data.y = final_result_onehot
         hetero_data.current_home_goals = torch.tensor(
-            current_home_goals, dtype=torch.long
+            count_goals(events, end_minute, home_team, away_team)[0], dtype=torch.long
         )
         hetero_data.current_away_goals = torch.tensor(
-            current_away_goals, dtype=torch.long
+            count_goals(events, end_minute, home_team, away_team)[1], dtype=torch.long
         )
         hetero_data.final_home_goals = torch.tensor(final_home_goals, dtype=torch.long)
         hetero_data.final_away_goals = torch.tensor(final_away_goals, dtype=torch.long)

@@ -44,27 +44,36 @@ def split_by_match(dataset, train_ratio=0.7, seed=42):
     return train_indices, val_indices, test_indices
 
 
-def train_one_epoch(model, dataset, criterion, optimizer, device, forward_pass):
+def train_one_epoch(
+    model, dataset, criterion, optimizer, device, forward_pass, batch_size=16
+):
     model.train()
     total_loss = 0.0
     correct = 0
     total = 0
 
-    tqdm_dataset = tqdm(dataset, desc="Training", leave=False)
-    for entry in tqdm_dataset:
-        optimizer.zero_grad()
+    indices = list(range(len(dataset)))
+    random.shuffle(indices)
 
+    optimizer.zero_grad()
+    tqdm_dataset = tqdm(indices, desc="Training", leave=False)
+    for i, idx in enumerate(tqdm_dataset):
+        entry = dataset[idx]
         out, y, home_goals, away_goals = forward_pass(entry, model, device)
 
         loss = criterion(out, y, home_goals, away_goals)
         loss.backward()
-        optimizer.step()
 
         total_loss += loss.item()
         preds = out["class_logits"].argmax(dim=1)
         correct += (preds == y).sum().item()
         total += y.size(0)
         tqdm_dataset.set_postfix(loss=f"{loss.item():.4f}")
+
+        if (i + 1) % batch_size == 0 or (i + 1) == len(indices):
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5)
+            optimizer.step()
+            optimizer.zero_grad()
 
     accuracy = 100 * correct / total if total > 0 else 0
     return total_loss / len(dataset), accuracy

@@ -4,12 +4,8 @@ from typing import Callable, Dict
 import torch
 
 from criterion import build_criterion
-from dataloader_paired import (
-    CumulativeSoccerDataset,
-    SoccerDataset,
-    TemporalSoccerDataset,
-    TemporalSequence,
-)
+from dataloader_paired import (CumulativeSoccerDataset, SoccerDataset,
+                               TemporalSequence, TemporalSoccerDataset)
 from models.disjoint import DisjointModel
 from models.gat import SpatialModel
 from models.rnn import SimpleRNNModel
@@ -59,6 +55,11 @@ def forward_pass_rnn(entry: TemporalSequence, model, device, percentage_of_match
 
     match_features = []
     stop = max(1, int(percentage_of_match * len(sequence)))
+
+    # Set the y data to match with the stop
+    labels_y = labels_y.repeat(1, stop).reshape(-1)
+    labels_home_goals = labels_home_goals.repeat(1, stop).reshape(-1)
+    labels_away_goals = labels_away_goals.repeat(1, stop).reshape(-1)
 
     for i in range(stop):
         data = sequence[i]
@@ -197,6 +198,11 @@ def forward_pass_disjoint(
     # Determine window size (number of timeframes to use)
     window_size = max(1, int(percentage_of_match * len(sequence)))
 
+    # Set the y data to match with the window_size
+    labels_y = labels_y.repeat(1, window_size).reshape(-1)
+    labels_home_goals = labels_home_goals.repeat(1, window_size).reshape(-1)
+    labels_away_goals = labels_away_goals.repeat(1, window_size).reshape(-1)
+
     x1_list, x2_list = [], []
     edge_index1_list, edge_index2_list = [], []
     edge_weight1_list, edge_weight2_list = [], []
@@ -251,7 +257,7 @@ def forward_pass_disjoint(
 
 # Define hyperparameters
 HYPERPARAMETERS = Hyperparameters(
-    num_epochs=20,
+    num_epochs=1,
     learning_rate=5e-4,
     weight_decay=1e-5,
     patience=10,
