@@ -243,11 +243,13 @@ def build_team_graphs_with_goals(
             home_players = sorted(list(cumulative_team_players[home_team]))
             player_to_idx = {p: i for i, p in enumerate(home_players)}
             # Remap cumulative edges to new indices
-            home_pass_counts = Counter({
-                (player_to_idx[i], player_to_idx[j]): c
-                for (i, j), c in cumulative_pass_counts[home_team].items()
-                if i in player_to_idx and j in player_to_idx
-            })
+            home_pass_counts = Counter(
+                {
+                    (player_to_idx[i], player_to_idx[j]): c
+                    for (i, j), c in cumulative_pass_counts[home_team].items()
+                    if i in player_to_idx and j in player_to_idx
+                }
+            )
             # Update cumulative positions
             for player, pos in home_positions.items():
                 cumulative_player_positions[home_team][player].append(pos)
@@ -278,11 +280,13 @@ def build_team_graphs_with_goals(
             cumulative_team_players[away_team].update(away_players)
             away_players = sorted(list(cumulative_team_players[away_team]))
             player_to_idx = {p: i for i, p in enumerate(away_players)}
-            away_pass_counts = Counter({
-                (player_to_idx[i], player_to_idx[j]): c
-                for (i, j), c in cumulative_pass_counts[away_team].items()
-                if i in player_to_idx and j in player_to_idx
-            })
+            away_pass_counts = Counter(
+                {
+                    (player_to_idx[i], player_to_idx[j]): c
+                    for (i, j), c in cumulative_pass_counts[away_team].items()
+                    if i in player_to_idx and j in player_to_idx
+                }
+            )
             for player, pos in away_positions.items():
                 cumulative_player_positions[away_team][player].append(pos)
             current_positions = {}
@@ -327,7 +331,6 @@ def build_team_graphs_with_goals(
         paired_graphs.append(hetero_data)
 
     return paired_graphs
-
 
 
 def build_team_graphs_progressive(

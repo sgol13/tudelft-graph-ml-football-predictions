@@ -7,8 +7,8 @@ from criterion import build_criterion
 from dataloader_paired import (
     CumulativeSoccerDataset,
     SoccerDataset,
-    TemporalSoccerDataset,
     TemporalSequence,
+    TemporalSoccerDataset,
 )
 from models.disjoint import DisjointModel
 from models.gat import SpatialModel
@@ -56,8 +56,6 @@ def forward_pass_rnn(entry: TemporalSequence, model, device, percentage_of_match
     labels_y = entry.y.to(device).argmax(dim=0).unsqueeze(0)
     labels_home_goals = entry.final_home_goals.to(device).unsqueeze(0)
     labels_away_goals = entry.final_away_goals.to(device).unsqueeze(0)
-
-    
 
     match_features = []
     stop = max(1, int(percentage_of_match * len(sequence)))

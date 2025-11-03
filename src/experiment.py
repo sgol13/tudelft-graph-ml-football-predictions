@@ -9,8 +9,12 @@ from tqdm import tqdm
 
 from experiment_configs import EXPERIMENTS, HYPERPARAMETERS
 from result_metrics import evaluate_across_time, evaluate_rps
-from saving_results import (load_checkpoint, make_run_dir,
-                            plot_training_curves, save_checkpoint)
+from saving_results import (
+    load_checkpoint,
+    make_run_dir,
+    plot_training_curves,
+    save_checkpoint,
+)
 
 
 def group_indices_by_match(dataset):
@@ -44,7 +48,9 @@ def split_by_match(dataset, train_ratio=0.7, seed=42):
     return train_indices, val_indices, test_indices
 
 
-def train_one_epoch(model, dataset, criterion, optimizer, device, forward_pass, batch_size=16):
+def train_one_epoch(
+    model, dataset, criterion, optimizer, device, forward_pass, batch_size=16
+):
     model.train()
     total_loss = 0.0
     correct = 0
@@ -61,7 +67,6 @@ def train_one_epoch(model, dataset, criterion, optimizer, device, forward_pass, 
 
         loss = criterion(out, y, home_goals, away_goals)
         loss.backward()
-        
 
         total_loss += loss.item()
         preds = out["class_logits"].argmax(dim=1)
