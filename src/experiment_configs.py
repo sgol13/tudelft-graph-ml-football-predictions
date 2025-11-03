@@ -4,12 +4,8 @@ from typing import Callable, Dict
 import torch
 
 from criterion import build_criterion
-from dataloader_paired import (
-    CumulativeSoccerDataset,
-    SoccerDataset,
-    TemporalSequence,
-    TemporalSoccerDataset,
-)
+from dataloader_paired import (CumulativeSoccerDataset, SoccerDataset,
+                               TemporalSequence, TemporalSoccerDataset)
 from models.disjoint import DisjointModel
 from models.gat import SpatialModel
 from models.rnn import SimpleRNNModel
