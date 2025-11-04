@@ -1,8 +1,11 @@
+import json
+import os
+from pathlib import Path
+
 import matplotlib.pyplot as plt
 import torch
+from tabulate import tabulate
 from tqdm import tqdm
-import os
-import json
 
 
 def compute_rps(preds_probs, y_true):
@@ -31,8 +34,6 @@ def compute_rps(preds_probs, y_true):
     cum_true = torch.cumsum(y_true_onehot, dim=1)
     rps = torch.mean(torch.sum((cum_probs - cum_true) ** 2, dim=1)) / (num_classes - 1)
     return rps.item()
-
-
 
 
 @torch.no_grad()
@@ -66,8 +67,6 @@ def evaluate_plus(model, dataset, criterion, device, forward_pass, run_dir):
         preds = probs.argmax(dim=1)
 
         n_pos = y.numel()
-
-        print(n_pos)
 
         # Loop over each position in this sample
         for i in range(n_pos):
@@ -108,7 +107,7 @@ def evaluate_plus(model, dataset, criterion, device, forward_pass, run_dir):
         "loss": total_loss / len(dataset),
         "accuracy": total_acc,
         "rps": total_rps,
-        "per_position": per_position
+        "per_position": per_position,
     }
 
     print(f"Total Accuracy: {results['accuracy']:.2f}%")
@@ -118,22 +117,19 @@ def evaluate_plus(model, dataset, criterion, device, forward_pass, run_dir):
         print(f"  Pos {p['pos']}: Acc={p['acc']:.2f}%, RPS={p['rps']:.4f}")
 
     os.makedirs(run_dir, exist_ok=True)
-    save_path = os.path.join(run_dir, f"evaluate_plus_results.json")
+    save_path = os.path.join(run_dir, "evaluate_plus_results.json")
 
     with open(save_path, "w") as f:
         json.dump(results, f, indent=4)
 
-import json
-import os
-import matplotlib.pyplot as plt
-from tabulate import tabulate
 
-def compare_models(metrics_paths, save_dir=None):
+def compare_models(metrics_paths, time_interval, save_dir=None):
     """
     Compare evaluation_plus results across multiple models.
 
     Args:
         metrics_paths (dict): {model_name: path_to_json}
+        time_interval (int): the length of every window
         save_dir (str, optional): where to save the comparison plots. If None, no saving.
 
     Each JSON is expected to contain:
@@ -166,16 +162,20 @@ def compare_models(metrics_paths, save_dir=None):
         table.append([name, res["loss"], res["accuracy"], res["rps"]])
 
     print("\n📊 Model Comparison Summary:")
-    print(tabulate(table, headers=["Model", "Loss", "Accuracy (%)", "RPS"], floatfmt=".4f"))
+    print(
+        tabulate(
+            table, headers=["Model", "Loss", "Accuracy (%)", "RPS"], floatfmt=".4f"
+        )
+    )
 
     # === Plot accuracy and RPS per position ===
     plt.figure(figsize=(10, 4))
     for name, res in data.items():
-        xs = [p["pos"] for p in res["per_position"]]
+        xs = [(p["pos"] + 1) * time_interval for p in res["per_position"]]
         accs = [p["acc"] for p in res["per_position"]]
         plt.plot(xs, accs, marker="o", label=name)
     plt.title("Accuracy per Position")
-    plt.xlabel("Position index (time)")
+    plt.xlabel("Time")
     plt.ylabel("Accuracy (%)")
     plt.legend()
     plt.grid(True)
@@ -188,11 +188,11 @@ def compare_models(metrics_paths, save_dir=None):
 
     plt.figure(figsize=(10, 4))
     for name, res in data.items():
-        xs = [p["pos"] for p in res["per_position"]]
+        xs = [(p["pos"] + 1) * time_interval for p in res["per_position"]]
         rpss = [p["rps"] for p in res["per_position"]]
         plt.plot(xs, rpss, marker="o", label=name)
     plt.title("RPS per Position")
-    plt.xlabel("Position index (time)")
+    plt.xlabel("Time")
     plt.ylabel("RPS (lower is better)")
     plt.legend()
     plt.grid(True)
@@ -203,8 +203,14 @@ def compare_models(metrics_paths, save_dir=None):
     plt.show()
 
 
+def main():
+    MODELS = {
+        "goal_loss": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_True/lr0.0005_wr1e-05_a0.1_b1/evaluate_plus_results.json",
+        "ce + goal_loss": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+        "ce": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+    }
+    compare_models(MODELS, 5, "comparison_disjoint_models_loss")
 
 
-
-
-
+if __name__ == "__main__":
+    main()

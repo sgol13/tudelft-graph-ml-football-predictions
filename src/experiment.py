@@ -217,7 +217,7 @@ def main():
         print(f"Run directory: {run_dir}")
     else:
         ###WHAT WE WANT TO DO, STUDIES
-        evaluate_plus(model, val_dataset, criterion, device, forward_pass, run_dir)
+        evaluate_plus(model, test_dataset, criterion, device, forward_pass, run_dir)
 
 
 if __name__ == "__main__":
