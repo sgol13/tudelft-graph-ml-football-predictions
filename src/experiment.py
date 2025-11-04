@@ -9,8 +9,8 @@ from tqdm import tqdm
 
 from experiment_configs import EXPERIMENTS, HYPERPARAMETERS
 from result_metrics import evaluate_plus
-from saving_results import (load_checkpoint, make_run_dir,
-                            plot_training_curves, save_checkpoint, load_final_model)
+from saving_results import (load_checkpoint, load_final_model, make_run_dir,
+                            plot_training_curves, save_checkpoint)
 
 
 def group_indices_by_match(dataset):
@@ -159,7 +159,7 @@ def main():
             model, optimizer, run_dir
         )
     else:
-        load_final_model(model,device,run_dir)
+        load_final_model(model, device, run_dir)
 
     num_epochs = hyp.num_epochs
     early_stopping_counter = 0
@@ -217,7 +217,10 @@ def main():
         print(f"Run directory: {run_dir}")
     else:
         ###WHAT WE WANT TO DO, STUDIES
-        evaluate_plus(model, test_dataset, criterion, device, forward_pass, run_dir)
+        is_cumulative = cfg.name == "large" or cfg.name == "small"
+        evaluate_plus(
+            model, test_dataset, criterion, device, forward_pass, run_dir, is_cumulative
+        )
 
 
 if __name__ == "__main__":

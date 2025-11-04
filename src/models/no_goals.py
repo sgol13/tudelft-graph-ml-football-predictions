@@ -1,7 +1,7 @@
 import torch.nn as nn
 import torch
 
-from src.dataloader_paired import TemporalSequence
+from dataloader_paired import TemporalSequence
 
 
 class NoGoalsModel(nn.Module):

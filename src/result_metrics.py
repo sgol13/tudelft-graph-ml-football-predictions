@@ -43,9 +43,17 @@ def compute_rps(preds_probs, y_true):
 
 
 @torch.no_grad()
-def evaluate_plus(model, dataset, criterion, device, forward_pass, run_dir):
+def evaluate_plus(
+    model, dataset, criterion, device, forward_pass, run_dir, is_cumulative
+):
     """
     Evaluates the model over the dataset, supporting variable-length y.
+
+    Args:
+        is_cumulative: If True, treats dataset as CumulativeDataset where each entry
+                      has a single prediction at end_minute. Filters to intervals of 5
+                      and maps to positions (end_minute // 5).
+
     Returns:
       - total accuracy (%)
       - total RPS
@@ -63,7 +71,15 @@ def evaluate_plus(model, dataset, criterion, device, forward_pass, run_dir):
     per_pos_rps = {}
 
     tqdm_dataset = tqdm(dataset, desc="Evaluating +", leave=False)
+
     for entry in tqdm_dataset:
+        # For CumulativeDataset, filter to only process entries at 5-minute intervals
+        if is_cumulative:
+            end_minute = entry.end_minute.item()
+
+            # Calculate position based on end_minute
+            position = max((end_minute // 5) - 1, 0)
+
         out, y, home_goals, away_goals = forward_pass(entry, model, device)
 
         loss = criterion(out, y, home_goals, away_goals)
@@ -72,32 +88,52 @@ def evaluate_plus(model, dataset, criterion, device, forward_pass, run_dir):
         probs = torch.softmax(out["class_logits"], dim=-1)
         preds = probs.argmax(dim=1)
 
-        n_pos = y.numel()
+        if is_cumulative:
+            # For cumulative dataset, y is a single value
+            # Ensure y is 0-dimensional or has single element
 
-        # Loop over each position in this sample
-        for i in range(n_pos):
-            yi = y[i]
-            probs_i = probs[i]
-            pred_i = preds[i]
-
-            correct_i = float(pred_i == yi)
-
-            rps_i = compute_rps(probs_i, yi)
+            correct = float(preds == y)
+            rps = compute_rps(probs, y)
 
             # Accumulate global stats
-            total_correct += correct_i
-            total_rps += rps_i
+            total_correct += correct
+            total_rps += rps
             total_samples += 1
 
-            # Accumulate per-position stats
-            if i not in per_pos_correct:
-                per_pos_correct[i] = 0.0
-                per_pos_total[i] = 0.0
-                per_pos_rps[i] = 0.0
+            # Accumulate per-position stats using calculated position
+            if position not in per_pos_correct:
+                per_pos_correct[position] = 0.0
+                per_pos_total[position] = 0.0
+                per_pos_rps[position] = 0.0
 
-            per_pos_correct[i] += correct_i
-            per_pos_total[i] += 1
-            per_pos_rps[i] += rps_i
+            per_pos_correct[position] += correct
+            per_pos_total[position] += 1
+            per_pos_rps[position] += rps
+        else:
+            n_pos = y.numel()
+
+            for i in range(n_pos):
+                yi = y[i]
+                probs_i = probs[i]
+                pred_i = preds[i]
+
+                correct_i = float(pred_i == yi)
+                rps_i = compute_rps(probs_i, yi)
+
+                # Accumulate global stats
+                total_correct += correct_i
+                total_rps += rps_i
+                total_samples += 1
+
+                # Accumulate per-position stats
+                if i not in per_pos_correct:
+                    per_pos_correct[i] = 0.0
+                    per_pos_total[i] = 0.0
+                    per_pos_rps[i] = 0.0
+
+                per_pos_correct[i] += correct_i
+                per_pos_total[i] += 1
+                per_pos_rps[i] += rps_i
 
     # === Aggregate results ===
     total_acc = 100 * total_correct / total_samples if total_samples > 0 else 0
@@ -145,7 +181,7 @@ def compare_models(metrics_paths, save_dir=None):
             "rps": float,
             "per_position": [
                 {"pos": int, "acc": float, "rps": float}, ...
-            ]
+            ],
         }
     """
     data = {}
@@ -212,11 +248,19 @@ def compare_models(metrics_paths, save_dir=None):
 
 def main():
     MODELS = {
+        "VARMA": f"{Path.cwd().as_posix()}/runs/2020_2024/varma/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+        "RNN": f"{Path.cwd().as_posix()}/runs/2020_2024/rnn/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+        "GAT": f"{Path.cwd().as_posix()}/runs/2020_2024/large/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+        "Disjoint": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+    }
+    compare_models(MODELS, "plots/comparison_all_models_ce_5min")
+
+    MODELS_DISJOINT = {
         "goal_loss": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_True/lr0.0005_wr1e-05_a0.1_b1/evaluate_plus_results.json",
         "ce + goal_loss": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
         "ce": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
     }
-    compare_models(MODELS, "plots/loss")
+    compare_models(MODELS_DISJOINT, "plots/loss")
 
     MODELS_INTERVAL = {
         "5": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
