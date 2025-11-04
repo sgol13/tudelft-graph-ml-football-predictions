@@ -67,8 +67,6 @@ def evaluate_plus(model, dataset, criterion, device, forward_pass, run_dir):
 
         n_pos = y.numel()
 
-        print(n_pos)
-
         # Loop over each position in this sample
         for i in range(n_pos):
             yi = y[i]
@@ -128,12 +126,13 @@ import os
 import matplotlib.pyplot as plt
 from tabulate import tabulate
 
-def compare_models(metrics_paths, save_dir=None):
+def compare_models(metrics_paths, time_interval, save_dir=None):
     """
     Compare evaluation_plus results across multiple models.
 
     Args:
         metrics_paths (dict): {model_name: path_to_json}
+        time_interval (int): the length of every window
         save_dir (str, optional): where to save the comparison plots. If None, no saving.
 
     Each JSON is expected to contain:
@@ -171,11 +170,11 @@ def compare_models(metrics_paths, save_dir=None):
     # === Plot accuracy and RPS per position ===
     plt.figure(figsize=(10, 4))
     for name, res in data.items():
-        xs = [p["pos"] for p in res["per_position"]]
+        xs = [(p["pos"]+1)*time_interval for p in res["per_position"]]
         accs = [p["acc"] for p in res["per_position"]]
         plt.plot(xs, accs, marker="o", label=name)
     plt.title("Accuracy per Position")
-    plt.xlabel("Position index (time)")
+    plt.xlabel("Time")
     plt.ylabel("Accuracy (%)")
     plt.legend()
     plt.grid(True)
@@ -188,11 +187,11 @@ def compare_models(metrics_paths, save_dir=None):
 
     plt.figure(figsize=(10, 4))
     for name, res in data.items():
-        xs = [p["pos"] for p in res["per_position"]]
+        xs = [(p["pos"]+1)*time_interval for p in res["per_position"]]
         rpss = [p["rps"] for p in res["per_position"]]
         plt.plot(xs, rpss, marker="o", label=name)
     plt.title("RPS per Position")
-    plt.xlabel("Position index (time)")
+    plt.xlabel("Time")
     plt.ylabel("RPS (lower is better)")
     plt.legend()
     plt.grid(True)
@@ -202,9 +201,14 @@ def compare_models(metrics_paths, save_dir=None):
         print(f"📉 Saved RPS plot to: {rps_path}")
     plt.show()
 
+def main():
+    MODELS = {"goal_loss": "/home/oriolmonge/src/Erasmus/Graph ML/tudelft-graph-ml-football-predictions/runs/2020_2024/disjoint/time_interval5/goal_True/lr0.0005_wr1e-05_a0.1_b1/evaluate_plus_results.json",
+              "ce + goal_loss": "/home/oriolmonge/src/Erasmus/Graph ML/tudelft-graph-ml-football-predictions/runs/2020_2024/disjoint/time_interval5/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+              "ce": "/home/oriolmonge/src/Erasmus/Graph ML/tudelft-graph-ml-football-predictions/runs/2020_2024/disjoint/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json"}
+    compare_models(MODELS, 5, "comparison_disjoint_models_loss")
 
-
-
+if __name__ == "__main__":
+    main()
 
 
 
