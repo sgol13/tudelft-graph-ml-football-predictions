@@ -44,7 +44,7 @@ class Hyperparameters:
     time_interval: int
 
 
-def forward_pass_rnn(entry: TemporalSequence, model, device, percentage_of_match=0.8):
+def forward_pass_rnn(entry: TemporalSequence, model, device, percentage_of_match=1):
     """
     batch: dict with keys 'sequence', 'labels', 'metadata'
     sequence: list of HeteroData sequence (length = batch_size)
