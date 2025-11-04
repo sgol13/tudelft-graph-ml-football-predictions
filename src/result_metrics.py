@@ -249,7 +249,7 @@ def compare_models(metrics_paths, save_dir=None):
 def main():
     MODELS = {
         "VARMA": f"{Path.cwd().as_posix()}/runs/2020_2024/varma/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
-        "RNN": f"{Path.cwd().as_posix()}/runs/2020_2024/varma/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+        "RNN": f"{Path.cwd().as_posix()}/runs/2020_2024/rnn/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
         "GAT": f"{Path.cwd().as_posix()}/runs/2020_2024/large/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
         "Disjoint": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
     }
