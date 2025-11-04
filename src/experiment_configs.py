@@ -4,8 +4,12 @@ from typing import Callable, Dict
 import torch
 
 from criterion import build_criterion
-from dataloader_paired import (CumulativeSoccerDataset, SoccerDataset,
-                               TemporalSequence, TemporalSoccerDataset)
+from dataloader_paired import (
+    CumulativeSoccerDataset,
+    SoccerDataset,
+    TemporalSequence,
+    TemporalSoccerDataset,
+)
 from models.disjoint import DisjointModel
 from models.gat import SpatialModel
 from models.rnn import SimpleRNNModel
@@ -255,6 +259,7 @@ def forward_pass_disjoint(
 
     return out, labels_y, labels_home_goals, labels_away_goals
 
+
 def forward_pass_no_goals_baseline(
     entry: TemporalSequence, model: NoGoalsModel, device, percentage_of_match=0.8
 ):
@@ -280,12 +285,12 @@ HYPERPARAMETERS = Hyperparameters(
     learning_rate=5e-4,
     weight_decay=1e-5,
     patience=5,
-    goal_information=True,
+    goal_information=False,
     alpha=1.0,
     beta=0.5,
     starting_year=2020,
     ending_year=2024,
-    time_interval=9,
+    time_interval=5,
 )
 
 # Define multiple experiment setups here
