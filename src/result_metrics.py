@@ -1,11 +1,13 @@
 import json
 import os
+import re
 from pathlib import Path
 
 import matplotlib.pyplot as plt
 import torch
 from tabulate import tabulate
 from tqdm import tqdm
+
 
 def extract_time_interval(path: str) -> int | None:
     match = re.search(r"time_interval(\d+)", path)
@@ -165,7 +167,6 @@ def compare_models(metrics_paths, save_dir=None):
     table = []
     for name, res in data.items():
         table.append([name, res["loss"], res["accuracy"], res["rps"]])
-        
 
     print("\n📊 Model Comparison Summary:")
     print(
@@ -215,12 +216,15 @@ def main():
         "ce + goal_loss": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
         "ce": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
     }
-    compare_models(MODELS, 5, "comparison_disjoint_models_loss")
+    compare_models(MODELS, "plots/loss")
 
-    MODELS_INTERVAL = {"5": "/home/oriolmonge/src/Erasmus/Graph ML/tudelft-graph-ml-football-predictions/runs/2020_2024/disjoint/time_interval5/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
-              "9": "/home/oriolmonge/src/Erasmus/Graph ML/tudelft-graph-ml-football-predictions/runs/2020_2024/disjoint/time_interval9/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
-              "15": "/home/oriolmonge/src/Erasmus/Graph ML/tudelft-graph-ml-football-predictions/runs/2020_2024/disjoint/time_interval15/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json"}
+    MODELS_INTERVAL = {
+        "5": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+        "9": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval9/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+        "15": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval15/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+    }
     compare_models(MODELS_INTERVAL, "plots/interval")
+
 
 if __name__ == "__main__":
     main()
