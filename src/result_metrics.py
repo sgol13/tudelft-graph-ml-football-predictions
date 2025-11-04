@@ -1,82 +1,210 @@
 import matplotlib.pyplot as plt
 import torch
 from tqdm import tqdm
+import os
+import json
 
 
-def ranked_probability_score(pred_probs: torch.Tensor, true_onehot: torch.Tensor):
+def compute_rps(preds_probs, y_true):
     """
-    pred_probs: [batch_size, num_classes], probabilities for each class
-    true_onehot: [batch_size, num_classes], one-hot encoded true labels
+    Ranked Probability Score (RPS) for classification.
+    Handles both 1D (single sample) and 2D (batch) inputs.
+    preds_probs: Tensor [num_classes] or [N, num_classes]
+    y_true: Tensor [] or [N] with class indices
     """
-    # Cumulative sums along classes
-    F = torch.cumsum(pred_probs, dim=1)
-    O = torch.cumsum(true_onehot, dim=1)
+    # Ensure both are tensors on the same device
+    if not torch.is_tensor(preds_probs):
+        preds_probs = torch.tensor(preds_probs)
+    device = preds_probs.device
+    y_true = y_true.to(device)
 
-    # Squared differences
-    rps = torch.mean(torch.sum((F - O) ** 2, dim=1))  # mean over batch
+    # Add batch dimension if missing
+    if preds_probs.ndim == 1:
+        preds_probs = preds_probs.unsqueeze(0)
+    if y_true.ndim == 0:
+        y_true = y_true.unsqueeze(0)
+
+    num_classes = preds_probs.size(1)
+    y_true_onehot = torch.zeros_like(preds_probs).scatter_(1, y_true.unsqueeze(1), 1)
+
+    cum_probs = torch.cumsum(preds_probs, dim=1)
+    cum_true = torch.cumsum(y_true_onehot, dim=1)
+    rps = torch.mean(torch.sum((cum_probs - cum_true) ** 2, dim=1)) / (num_classes - 1)
     return rps.item()
 
 
-@torch.no_grad()
-def evaluate_rps(model, dataloader, device, forward_pass):
-    model.eval()
-    all_preds = []
-    all_labels = []
-
-    for batch in dataloader:
-        out, y, _, _ = forward_pass(batch, model, device)
-
-        probs = torch.softmax(out["class_logits"], dim=1)
-
-        all_preds.append(probs.cpu())
-        all_labels.append(y.cpu())
-
-    all_preds = torch.cat(all_preds, dim=0)
-    all_labels = torch.cat(all_labels, dim=0)
-
-    # Convert labels to one-hot if needed
-    num_classes = all_preds.shape[1]
-    labels_onehot = torch.nn.functional.one_hot(
-        all_labels, num_classes=num_classes
-    ).float()
-
-    rps_score = ranked_probability_score(all_preds, labels_onehot)
-    print("RPS:", rps_score)
 
 
 @torch.no_grad()
-def evaluate_across_time(model, dataloader, device, forward_pass, run_dir):
+def evaluate_plus(model, dataset, criterion, device, forward_pass, run_dir):
+    """
+    Evaluates the model over the dataset, supporting variable-length y.
+    Returns:
+      - total accuracy (%)
+      - total RPS
+      - per-position accuracy and RPS (aggregated across all entries that had that position)
+    """
     model.eval()
-    correct_by_minute = {}
-    total_by_minute = {}
+    total_loss = 0.0
+    total_correct = 0
+    total_rps = 0.0
+    total_samples = 0
 
-    progress = tqdm(dataloader, desc="Evaluating across time", leave=False)
-    for batch in progress:
-        out, y, _, _ = forward_pass(batch, model, device)
-        preds = out["class_logits"].argmax(dim=1)
+    # Dynamic per-position stats (indexed by position number)
+    per_pos_correct = {}
+    per_pos_total = {}
+    per_pos_rps = {}
 
-        # 🔹 obtener end_minute directamente del batch
-        end_minutes = [seq[-1].end_minute.item() for seq in batch["sequences"]]
+    tqdm_dataset = tqdm(dataset, desc="Evaluating +", leave=False)
+    for entry in tqdm_dataset:
+        out, y, home_goals, away_goals = forward_pass(entry, model, device)
 
-        for pred, label, end_min in zip(preds, y, end_minutes):
-            end_min = int(end_min)
-            correct_by_minute[end_min] = (
-                correct_by_minute.get(end_min, 0) + (pred == label).item()
-            )
-            total_by_minute[end_min] = total_by_minute.get(end_min, 0) + 1
+        loss = criterion(out, y, home_goals, away_goals)
+        total_loss += loss.item()
 
-    # calcular accuracy por minuto
-    accuracy_by_minute = {
-        m: 100 * correct_by_minute[m] / total_by_minute[m]
-        for m in sorted(total_by_minute.keys())
+        probs = torch.softmax(out["class_logits"], dim=-1)
+        preds = probs.argmax(dim=1)
+
+        n_pos = y.numel()
+
+        print(n_pos)
+
+        # Loop over each position in this sample
+        for i in range(n_pos):
+            yi = y[i]
+            probs_i = probs[i]
+            pred_i = preds[i]
+
+            correct_i = float(pred_i == yi)
+
+            rps_i = compute_rps(probs_i, yi)
+
+            # Accumulate global stats
+            total_correct += correct_i
+            total_rps += rps_i
+            total_samples += 1
+
+            # Accumulate per-position stats
+            if i not in per_pos_correct:
+                per_pos_correct[i] = 0.0
+                per_pos_total[i] = 0.0
+                per_pos_rps[i] = 0.0
+
+            per_pos_correct[i] += correct_i
+            per_pos_total[i] += 1
+            per_pos_rps[i] += rps_i
+
+    # === Aggregate results ===
+    total_acc = 100 * total_correct / total_samples if total_samples > 0 else 0
+    total_rps /= total_samples if total_samples > 0 else 1
+
+    per_position = []
+    for i in sorted(per_pos_correct.keys()):
+        acc_i = 100 * per_pos_correct[i] / per_pos_total[i]
+        rps_i = per_pos_rps[i] / per_pos_total[i]
+        per_position.append({"pos": i, "acc": acc_i, "rps": rps_i})
+
+    results = {
+        "loss": total_loss / len(dataset),
+        "accuracy": total_acc,
+        "rps": total_rps,
+        "per_position": per_position
     }
 
-    plt.plot(
-        list(accuracy_by_minute.keys()), list(accuracy_by_minute.values()), marker="o"
-    )
-    plt.xlabel("End minute")
-    plt.ylabel("Accuracy (%)")
-    plt.title("Accuracy vs Time Frame")
-    plt.savefig(f"{run_dir}/accuracy_across_time.png")
+    print(f"Total Accuracy: {results['accuracy']:.2f}%")
+    print(f"Total RPS: {results['rps']:.4f}")
+    print("Per position:")
+    for p in results["per_position"]:
+        print(f"  Pos {p['pos']}: Acc={p['acc']:.2f}%, RPS={p['rps']:.4f}")
 
-    return accuracy_by_minute
+    os.makedirs(run_dir, exist_ok=True)
+    save_path = os.path.join(run_dir, f"evaluate_plus_results.json")
+
+    with open(save_path, "w") as f:
+        json.dump(results, f, indent=4)
+
+import json
+import os
+import matplotlib.pyplot as plt
+from tabulate import tabulate
+
+def compare_models(metrics_paths, save_dir=None):
+    """
+    Compare evaluation_plus results across multiple models.
+
+    Args:
+        metrics_paths (dict): {model_name: path_to_json}
+        save_dir (str, optional): where to save the comparison plots. If None, no saving.
+
+    Each JSON is expected to contain:
+        {
+            "loss": float,
+            "accuracy": float,
+            "rps": float,
+            "per_position": [
+                {"pos": int, "acc": float, "rps": float}, ...
+            ]
+        }
+    """
+    data = {}
+
+    # === Load JSON files ===
+    for name, path in metrics_paths.items():
+        if not os.path.exists(path):
+            print(f"⚠️  Missing file for {name}: {path}")
+            continue
+        with open(path, "r") as f:
+            data[name] = json.load(f)
+
+    if not data:
+        print("❌ No valid model results found.")
+        return
+
+    # === Print comparison table ===
+    table = []
+    for name, res in data.items():
+        table.append([name, res["loss"], res["accuracy"], res["rps"]])
+
+    print("\n📊 Model Comparison Summary:")
+    print(tabulate(table, headers=["Model", "Loss", "Accuracy (%)", "RPS"], floatfmt=".4f"))
+
+    # === Plot accuracy and RPS per position ===
+    plt.figure(figsize=(10, 4))
+    for name, res in data.items():
+        xs = [p["pos"] for p in res["per_position"]]
+        accs = [p["acc"] for p in res["per_position"]]
+        plt.plot(xs, accs, marker="o", label=name)
+    plt.title("Accuracy per Position")
+    plt.xlabel("Position index (time)")
+    plt.ylabel("Accuracy (%)")
+    plt.legend()
+    plt.grid(True)
+    if save_dir:
+        os.makedirs(save_dir, exist_ok=True)
+        acc_path = os.path.join(save_dir, "compare_accuracy.png")
+        plt.savefig(acc_path, bbox_inches="tight")
+        print(f"📈 Saved accuracy plot to: {acc_path}")
+    plt.show()
+
+    plt.figure(figsize=(10, 4))
+    for name, res in data.items():
+        xs = [p["pos"] for p in res["per_position"]]
+        rpss = [p["rps"] for p in res["per_position"]]
+        plt.plot(xs, rpss, marker="o", label=name)
+    plt.title("RPS per Position")
+    plt.xlabel("Position index (time)")
+    plt.ylabel("RPS (lower is better)")
+    plt.legend()
+    plt.grid(True)
+    if save_dir:
+        rps_path = os.path.join(save_dir, "compare_rps.png")
+        plt.savefig(rps_path, bbox_inches="tight")
+        print(f"📉 Saved RPS plot to: {rps_path}")
+    plt.show()
+
+
+
+
+
+
+
