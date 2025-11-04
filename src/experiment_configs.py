@@ -10,6 +10,7 @@ from models.disjoint import DisjointModel
 from models.gat import SpatialModel
 from models.rnn import SimpleRNNModel
 from models.varma import VARMABaseline
+from src.models.no_goals import NoGoalsModel
 
 
 @dataclass
@@ -254,6 +255,24 @@ def forward_pass_disjoint(
 
     return out, labels_y, labels_home_goals, labels_away_goals
 
+def forward_pass_no_goals_baseline(
+    entry: TemporalSequence, model: NoGoalsModel, device, percentage_of_match=0.8
+):
+    sequence = entry.hetero_data_sequence
+    labels_y = entry.y.to(device).argmax(dim=0).unsqueeze(0)
+    labels_home_goals = entry.final_home_goals.to(device).unsqueeze(0)
+    labels_away_goals = entry.final_away_goals.to(device).unsqueeze(0)
+
+    window_size = max(1, int(percentage_of_match * len(sequence)))
+
+    labels_y = labels_y.repeat(1, window_size).reshape(-1)
+    labels_home_goals = labels_home_goals.repeat(1, window_size).reshape(-1)
+    labels_away_goals = labels_away_goals.repeat(1, window_size).reshape(-1)
+
+    out = model(entry, window_size=window_size)
+
+    return out, labels_y, labels_home_goals, labels_away_goals
+
 
 # Define hyperparameters
 HYPERPARAMETERS = Hyperparameters(
@@ -355,6 +374,23 @@ EXPERIMENTS = {
         ),
         model=DisjointModel(goal_information=HYPERPARAMETERS.goal_information),
         forward_pass=forward_pass_disjoint,
+        criterion=build_criterion(
+            goal_information=HYPERPARAMETERS.goal_information,
+            alpha=HYPERPARAMETERS.alpha,
+            beta=HYPERPARAMETERS.beta,
+        ),
+    ),
+    "no_goals": ExperimentConfig(
+        # Set number of epochs to 0 for baseline
+        name="no_goals",
+        dataset_factory=lambda: TemporalSoccerDataset(
+            root="data",
+            starting_year=HYPERPARAMETERS.starting_year,
+            ending_year=HYPERPARAMETERS.ending_year,
+            time_interval=HYPERPARAMETERS.time_interval,
+        ),
+        model=NoGoalsModel(),
+        forward_pass=forward_pass_no_goals_baseline,
         criterion=build_criterion(
             goal_information=HYPERPARAMETERS.goal_information,
             alpha=HYPERPARAMETERS.alpha,
