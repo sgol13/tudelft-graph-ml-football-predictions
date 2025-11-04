@@ -10,7 +10,7 @@ from models.disjoint import DisjointModel
 from models.gat import SpatialModel
 from models.rnn import SimpleRNNModel
 from models.varma import VARMABaseline
-from src.models.no_goals import NoGoalsModel
+from models.no_goals import NoGoalsModel
 
 
 @dataclass

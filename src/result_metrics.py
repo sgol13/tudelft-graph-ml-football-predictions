@@ -145,7 +145,7 @@ def compare_models(metrics_paths, save_dir=None):
             "rps": float,
             "per_position": [
                 {"pos": int, "acc": float, "rps": float}, ...
-            ]
+            ],
         }
     """
     data = {}
