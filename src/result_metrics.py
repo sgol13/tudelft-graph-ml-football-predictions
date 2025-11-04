@@ -202,9 +202,11 @@ def compare_models(metrics_paths, time_interval, save_dir=None):
     plt.show()
 
 def main():
-    MODELS = {"goal_loss": "/home/oriolmonge/src/Erasmus/Graph ML/tudelft-graph-ml-football-predictions/runs/2020_2024/disjoint/time_interval5/goal_True/lr0.0005_wr1e-05_a0.1_b1/evaluate_plus_results.json",
-              "ce + goal_loss": "/home/oriolmonge/src/Erasmus/Graph ML/tudelft-graph-ml-football-predictions/runs/2020_2024/disjoint/time_interval5/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
-              "ce": "/home/oriolmonge/src/Erasmus/Graph ML/tudelft-graph-ml-football-predictions/runs/2020_2024/disjoint/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json"}
+    MODELS = {
+        "goal_loss": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_True/lr0.0005_wr1e-05_a0.1_b1/evaluate_plus_results.json",
+        "ce + goal_loss": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+        "ce": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+    }
     compare_models(MODELS, 5, "comparison_disjoint_models_loss")
 
 if __name__ == "__main__":
