@@ -108,7 +108,11 @@ def load_checkpoint(model, optimizer, run_dir):
         {"train_loss": [], "test_loss": [], "train_acc": [], "test_acc": []},
     )
 
+
 def load_final_model(model, device, run_dir):
     model_path = os.path.join(run_dir, "best_model.pth")
     if os.path.exists(model_path):
-        model.load_state_dict(torch.load(model_path, map_location=device, weights_only=False))
+        model.load_state_dict(
+            torch.load(model_path, map_location=device, weights_only=False)
+        )
+
