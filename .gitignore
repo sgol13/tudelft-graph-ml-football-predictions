@@ -3,3 +3,5 @@
 src/data/*
 .python-version
 **/__pycache__/**
+data/
+model_backups/

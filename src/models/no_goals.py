@@ -11,6 +11,7 @@ class NoGoalsModel(nn.Module):
 
     def forward(self, entry: TemporalSequence, window_size: int):
 
+        device = next(self.parameters()).device
         results = []
         home_goals = []
         away_goals = []
@@ -25,11 +26,11 @@ class NoGoalsModel(nn.Module):
             away = window.current_away_goals
 
             if home > away:
-                r = torch.tensor([1.0, 0.0, 0.0])
+                r = torch.tensor([1.0, 0.0, 0.0], device=device)
             elif home < away:
-                r = torch.tensor([0.0, 0.0, 1.0])
+                r = torch.tensor([0.0, 0.0, 1.0], device=device)
             else:
-                r = torch.tensor([0.0, 1.0, 0.0])
+                r = torch.tensor([0.0, 1.0, 0.0], device=device)
 
             results.append(r)
             home_goals.append(home)
@@ -37,6 +38,6 @@ class NoGoalsModel(nn.Module):
 
         return {
             'class_logits': torch.stack(results),
-            'home_goals_pred': torch.tensor(home_goals),
-            'away_goals_pred': torch.tensor(away_goals),
+            'home_goals_pred': torch.tensor(home_goals, device=device),
+            'away_goals_pred': torch.tensor(away_goals, device=device),
         }

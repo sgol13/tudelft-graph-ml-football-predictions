@@ -2,8 +2,11 @@ from dataclasses import dataclass
 from typing import Callable, Dict
 
 import torch
+from torch_geometric.data import Data
 
 from criterion import build_criterion
+from dataloader_paired import (CumulativeSoccerDataset, SoccerDataset,
+                               TemporalSequence, TemporalSoccerDataset, TemporalAllPlayersSoccerDataset)
 from dataloader_paired import (
     CumulativeSoccerDataset,
     SoccerDataset,
@@ -14,6 +17,8 @@ from models.disjoint import DisjointModel
 from models.gat import SpatialModel
 from models.rnn import SimpleRNNModel
 from models.varma import VARMABaseline
+from src.models.graph_rnn import GraphRNNModel
+from src.models.no_goals import NoGoalsModel
 from models.no_goals import NoGoalsModel
 
 
@@ -32,6 +37,8 @@ class ExperimentConfig:
     ]
     train_split: float = 0.8
     seed = 42
+    only_cpu: bool = False
+    trainable: bool = True
 
 
 @dataclass
@@ -260,6 +267,67 @@ def forward_pass_disjoint(
     return out, labels_y, labels_home_goals, labels_away_goals
 
 
+def normalize_edge_weights(edge_weights: torch.Tensor) -> torch.Tensor:
+    return (
+        edge_weights / (edge_weights.max() + 1e-8)
+        if edge_weights.numel() > 0
+        else torch.zeros(edge_weights.size(), device=edge_weights.device)
+    )
+
+
+def forward_pass_graph_rnn(
+    entry: TemporalSequence, model: GraphRNNModel, device, percentage_of_match=0.8
+):
+    sequence = entry.hetero_data_sequence
+    labels_y = entry.y.to(device).argmax(dim=0).unsqueeze(0)
+    labels_home_goals = entry.final_home_goals.to(device).unsqueeze(0)
+    labels_away_goals = entry.final_away_goals.to(device).unsqueeze(0)
+
+    window_size = max(1, int(percentage_of_match * len(sequence)))
+
+    labels_y = labels_y.repeat(1, window_size).reshape(-1)
+    labels_home_goals = labels_home_goals.repeat(1, window_size).reshape(-1)
+    labels_away_goals = labels_away_goals.repeat(1, window_size).reshape(-1)
+
+    home_graphs_list: list[Data] = []
+    away_graphs_list: list[Data] = []
+    home_features_list: list[torch.Tensor] = []
+    away_features_list: list[torch.Tensor] = []
+
+    for t in range(window_size):
+        timeframe = sequence[t].to(device)
+
+        # extract graphs
+        data_home = Data(
+            x=timeframe["home"].x,
+            edge_index=timeframe["home", "passes_to", "home"].edge_index,
+            edge_attr=normalize_edge_weights(timeframe["home", "passes_to", "home"].edge_weight),
+        ).to(device)
+        home_graphs_list.append(data_home)
+
+        data_away = Data(
+            x=timeframe["away"].x,
+            edge_index=timeframe["away", "passes_to", "away"].edge_index,
+            edge_attr=normalize_edge_weights(timeframe["away", "passes_to", "away"].edge_weight),
+        ).to(device)
+        away_graphs_list.append(data_away)
+
+        # extract global team features
+        home_features, away_features = extract_global_feature_from_match(timeframe, device)
+        home_features_list.append(home_features)
+        away_features_list.append(away_features)
+
+    out = model(
+        home_graphs_list,
+        away_graphs_list,
+        home_features_list,
+        away_features_list,
+        window_size=window_size,
+    )
+
+    return out, labels_y, labels_home_goals, labels_away_goals
+
+
 def forward_pass_no_goals_baseline(
     entry: TemporalSequence, model: NoGoalsModel, device, percentage_of_match=0.8
 ):
@@ -299,7 +367,8 @@ EXPERIMENTS = {
         name="small",
         dataset_factory=lambda: CumulativeSoccerDataset(
             root="data",
-            ending_year=2015,
+            starting_year=HYPERPARAMETERS.starting_year,
+            ending_year=HYPERPARAMETERS.ending_year,
             time_interval=HYPERPARAMETERS.time_interval,
         ),
         model=SpatialModel(
@@ -386,7 +455,6 @@ EXPERIMENTS = {
         ),
     ),
     "no_goals": ExperimentConfig(
-        # Set number of epochs to 0 for baseline
         name="no_goals",
         dataset_factory=lambda: TemporalSoccerDataset(
             root="data",
@@ -401,5 +469,28 @@ EXPERIMENTS = {
             alpha=HYPERPARAMETERS.alpha,
             beta=HYPERPARAMETERS.beta,
         ),
+        only_cpu=True,
+        trainable=False,
     ),
+    "grnn": ExperimentConfig(
+        name="grnn",
+        dataset_factory=lambda: TemporalAllPlayersSoccerDataset(
+            root="data",
+            starting_year=HYPERPARAMETERS.starting_year,
+            ending_year=HYPERPARAMETERS.ending_year,
+            time_interval=HYPERPARAMETERS.time_interval,
+        ),
+        model=GraphRNNModel(
+            hidden_size=64,
+            num_layers=3,
+            goal_information=HYPERPARAMETERS.goal_information
+        ),
+        forward_pass=forward_pass_graph_rnn,
+        criterion=build_criterion(
+            goal_information=HYPERPARAMETERS.goal_information,
+            alpha=HYPERPARAMETERS.alpha,
+            beta=HYPERPARAMETERS.beta,
+        ),
+        only_cpu=True,
+    )
 }
