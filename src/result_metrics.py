@@ -214,8 +214,8 @@ def compare_models(metrics_paths, save_dir=None):
     # === Plot accuracy and RPS per position ===
     plt.figure(figsize=(10, 4))
     for name, res in data.items():
-        xs = [(p["pos"] + 1) * time_interval[name] for p in res["per_position"]]
-        accs = [p["acc"] for p in res["per_position"]]
+        xs = [(p["pos"] + 1) * time_interval[name] for p in res["per_position"] if (p["pos"] +1) * time_interval[name] <= 90]
+        accs = [p["acc"] for p in res["per_position"] if (p["pos"] +1) * time_interval[name] <= 90]
         plt.plot(xs, accs, marker="o", label=name)
     plt.title("Accuracy per Minute")
     plt.xlabel("Time")
@@ -231,8 +231,8 @@ def compare_models(metrics_paths, save_dir=None):
 
     plt.figure(figsize=(10, 4))
     for name, res in data.items():
-        xs = [(p["pos"] + 1) * time_interval[name] for p in res["per_position"]]
-        rpss = [p["rps"] for p in res["per_position"]]
+        xs = [(p["pos"] + 1) * time_interval[name] for p in res["per_position"] if (p["pos"] +1) * time_interval[name] <= 90]
+        rpss = [p["rps"]  for p in res["per_position"] if (p["pos"] +1) * time_interval[name] <= 90]
         plt.plot(xs, rpss, marker="o", label=name)
     plt.title("RPS per Minute")
     plt.xlabel("Time")
