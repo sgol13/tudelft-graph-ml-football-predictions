@@ -7,6 +7,10 @@ import torch
 from tabulate import tabulate
 from tqdm import tqdm
 
+def extract_time_interval(path: str) -> int | None:
+    match = re.search(r"time_interval(\d+)", path)
+    return int(match.group(1)) if match else None
+
 
 def compute_rps(preds_probs, y_true):
     """
@@ -123,7 +127,7 @@ def evaluate_plus(model, dataset, criterion, device, forward_pass, run_dir):
         json.dump(results, f, indent=4)
 
 
-def compare_models(metrics_paths, time_interval, save_dir=None):
+def compare_models(metrics_paths, save_dir=None):
     """
     Compare evaluation_plus results across multiple models.
 
@@ -143,7 +147,7 @@ def compare_models(metrics_paths, time_interval, save_dir=None):
         }
     """
     data = {}
-
+    time_interval = {}
     # === Load JSON files ===
     for name, path in metrics_paths.items():
         if not os.path.exists(path):
@@ -151,6 +155,7 @@ def compare_models(metrics_paths, time_interval, save_dir=None):
             continue
         with open(path, "r") as f:
             data[name] = json.load(f)
+            time_interval[name] = extract_time_interval(path)
 
     if not data:
         print("❌ No valid model results found.")
@@ -160,6 +165,7 @@ def compare_models(metrics_paths, time_interval, save_dir=None):
     table = []
     for name, res in data.items():
         table.append([name, res["loss"], res["accuracy"], res["rps"]])
+        
 
     print("\n📊 Model Comparison Summary:")
     print(
@@ -174,7 +180,7 @@ def compare_models(metrics_paths, time_interval, save_dir=None):
         xs = [(p["pos"] + 1) * time_interval for p in res["per_position"]]
         accs = [p["acc"] for p in res["per_position"]]
         plt.plot(xs, accs, marker="o", label=name)
-    plt.title("Accuracy per Position")
+    plt.title("Accuracy per Minute")
     plt.xlabel("Time")
     plt.ylabel("Accuracy (%)")
     plt.legend()
@@ -191,9 +197,9 @@ def compare_models(metrics_paths, time_interval, save_dir=None):
         xs = [(p["pos"] + 1) * time_interval for p in res["per_position"]]
         rpss = [p["rps"] for p in res["per_position"]]
         plt.plot(xs, rpss, marker="o", label=name)
-    plt.title("RPS per Position")
+    plt.title("RPS per Minute")
     plt.xlabel("Time")
-    plt.ylabel("RPS (lower is better)")
+    plt.ylabel("RPS")
     plt.legend()
     plt.grid(True)
     if save_dir:
@@ -211,6 +217,10 @@ def main():
     }
     compare_models(MODELS, 5, "comparison_disjoint_models_loss")
 
+    MODELS_INTERVAL = {"5": "/home/oriolmonge/src/Erasmus/Graph ML/tudelft-graph-ml-football-predictions/runs/2020_2024/disjoint/time_interval5/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+              "9": "/home/oriolmonge/src/Erasmus/Graph ML/tudelft-graph-ml-football-predictions/runs/2020_2024/disjoint/time_interval9/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+              "15": "/home/oriolmonge/src/Erasmus/Graph ML/tudelft-graph-ml-football-predictions/runs/2020_2024/disjoint/time_interval15/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json"}
+    compare_models(MODELS_INTERVAL, "plots/interval")
 
 if __name__ == "__main__":
     main()
