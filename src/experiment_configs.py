@@ -280,12 +280,12 @@ HYPERPARAMETERS = Hyperparameters(
     learning_rate=5e-4,
     weight_decay=1e-5,
     patience=5,
-    goal_information=False,
+    goal_information=True,
     alpha=1.0,
     beta=0.5,
     starting_year=2020,
     ending_year=2024,
-    time_interval=5,
+    time_interval=9,
 )
 
 # Define multiple experiment setups here
