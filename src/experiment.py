@@ -8,9 +8,9 @@ import torch.optim as optim
 from tqdm import tqdm
 
 from experiment_configs import EXPERIMENTS, HYPERPARAMETERS
-from result_metrics import evaluate_across_time, evaluate_rps
+from result_metrics import evaluate_plus
 from saving_results import (load_checkpoint, make_run_dir,
-                            plot_training_curves, save_checkpoint)
+                            plot_training_curves, save_checkpoint, load_final_model)
 
 
 def group_indices_by_match(dataset):
@@ -154,11 +154,14 @@ def main():
         model.parameters(), lr=hyp.learning_rate, weight_decay=hyp.weight_decay
     )
 
-    num_epochs = hyp.num_epochs
-    start_epoch, best_acc, best_test_loss, history = load_checkpoint(
-        model, optimizer, run_dir
-    )
+    if not should_load_model:
+        start_epoch, best_acc, best_test_loss, history = load_checkpoint(
+            model, optimizer, run_dir
+        )
+    else:
+        load_final_model(model,device,run_dir)
 
+    num_epochs = hyp.num_epochs
     early_stopping_counter = 0
 
     # === TRAINING LOOP ===================================================
@@ -214,8 +217,7 @@ def main():
         print(f"Run directory: {run_dir}")
     else:
         ###WHAT WE WANT TO DO, STUDIES
-        evaluate_rps(model, test_dataset, device, forward_pass)
-        evaluate_across_time(model, test_dataset, device, forward_pass, run_dir)
+        evaluate_plus(model, val_dataset, criterion, device, forward_pass, run_dir)
 
 
 if __name__ == "__main__":

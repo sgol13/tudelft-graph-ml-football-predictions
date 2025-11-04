@@ -176,7 +176,7 @@ def forward_pass_gat(entry, model, device):
 
 
 def forward_pass_disjoint(
-    entry: TemporalSequence, model: DisjointModel, device, percentage_of_match=0.8
+    entry: TemporalSequence, model: DisjointModel, device, percentage_of_match=1.0
 ):
     """
     batch: dict with keys 'sequences', 'labels', 'metadata'
@@ -257,11 +257,11 @@ def forward_pass_disjoint(
 
 # Define hyperparameters
 HYPERPARAMETERS = Hyperparameters(
-    num_epochs=1,
+    num_epochs=20,
     learning_rate=5e-4,
     weight_decay=1e-5,
-    patience=10,
-    goal_information=False,
+    patience=5,
+    goal_information=True,
     alpha=1.0,
     beta=0.5,
     starting_year=2020,

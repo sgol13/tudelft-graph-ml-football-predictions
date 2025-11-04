@@ -207,7 +207,18 @@ def build_team_graphs_with_goals(
     if events.empty or "minute" not in events.columns:
         return []
 
-    max_minute = events["minute"].max()
+    # Check time
+    events = events.copy()
+    events = events[
+        (events["minute"].notnull())
+        & (events["minute"] >= 0)
+        & (events["minute"] < 180)
+    ]
+    if events.empty:
+        raise Exception(f"No valid events for {home_team} vs {away_team}")
+
+    max_minute = int(events["minute"].max())
+    max_minute = min(max_minute, 120)
 
     # Get final result with one-hot encoding
     final_home_goals, final_away_goals, final_result_onehot = get_final_result(
@@ -340,7 +351,19 @@ def build_team_graphs_progressive(
     if events.empty or "minute" not in events.columns:
         raise Exception("Faulty data entry")
 
-    max_minute = events["minute"].max()
+    # Check time
+    events = events.copy()
+    events = events[
+        (events["minute"].notnull())
+        & (events["minute"] >= 0)
+        & (events["minute"] < 180)
+    ]
+    if events.empty:
+        raise Exception(f"No valid events for {home_team} vs {away_team}")
+
+    max_minute = int(events["minute"].max())
+    max_minute = min(max_minute, 120)
+
     final_home_goals, final_away_goals, final_result_onehot = get_final_result(
         events, home_team, away_team
     )
@@ -406,6 +429,44 @@ def build_team_graphs_progressive(
     )
 
     return sequence
+
+def sanity_check_events(events: pd.DataFrame, match_id: str):
+    try:
+        # Defensive copy
+        events = events.copy()
+
+
+        # Check for missing or weird values
+        bad_minutes = events[
+            (events["minute"].isna())
+            | (events["minute"] < 0)
+            | (events["minute"] > 180)
+        ]
+        if not bad_minutes.empty:
+            print(f"⚠️  Weird minutes in match {match_id}:")
+            print(bad_minutes[["minute", "type", "team", "player"]].head(10))
+    except:
+        print("Problem intransically in the data")
+
+
+def sanity_check_positions(events: pd.DataFrame, match_id: str):
+    try:
+        # Drop rows with no spatial data
+        valid_positions = events.dropna(subset=["x", "y", "end_x", "end_y"])
+
+        if valid_positions.empty:
+            print(f"⚠️  No valid positions in match {match_id}")
+            return
+
+        # Check ranges
+        for col in ["x", "y", "end_x", "end_y"]:
+            invalid = valid_positions[(valid_positions[col] < 0) | (valid_positions[col] > 100)]
+            if not invalid.empty:
+                print(f"⚠️  {len(invalid)} invalid '{col}' entries in match {match_id}")
+                print(invalid[[col, "minute", "type", "player"]].head(5))
+    except:
+        print("Problem intransically in the data")
+
 
 
 class SoccerDataset(Dataset):
@@ -536,6 +597,9 @@ class TemporalSoccerDataset(SoccerDataset):
                 home_team = match["home_team"]
                 away_team = match["away_team"]
                 match_id = match.get("game_id", f"{season_name}_{idx}")
+
+                # sanity_check_events(events, match_id)
+                # sanity_check_positions(events, match_id)
 
                 # Get entire temporal sequence for this match
                 try:
