@@ -27,7 +27,7 @@ def count_passes(
 ) -> tuple[Counter[tuple[int, int]], dict[str, tuple[float, float, float]], list[str]]:
     """Count successful passes within a team over given events."""
     if team_events.empty:
-        return Counter(), {}, []
+        return Counter(), {}, players if players is not None else []
 
     pass_events = team_events[
         (team_events["type"] == "Pass") & (team_events["outcome_type"] == "Successful")
@@ -42,7 +42,7 @@ def count_passes(
             passing_players.add(str(player))
 
     if not passing_players:
-        return Counter(), {}, []
+        return Counter(), {}, players if players is not None else []
 
     team_players = sorted(list(passing_players))
     player_to_idx = {p: i for i, p in enumerate(team_players)}
