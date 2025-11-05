@@ -349,10 +349,10 @@ def forward_pass_no_goals_baseline(
 
 # Define hyperparameters
 HYPERPARAMETERS = Hyperparameters(
-    num_epochs=20,
+    num_epochs=50,
     learning_rate=5e-4,
     weight_decay=1e-5,
-    patience=5,
+    patience=7,
     goal_information=False,
     alpha=1.0,
     beta=0.5,
