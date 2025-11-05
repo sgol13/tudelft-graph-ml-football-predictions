@@ -1,8 +1,9 @@
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Callable, Dict
 
 import torch
-from torch_geometric.data import Data
+from torch_geometric.data import HeteroData, Batch, Data
 
 from criterion import build_criterion
 from dataloader_paired import (CumulativeSoccerDataset, SoccerDataset,
@@ -19,7 +20,7 @@ from models.rnn import SimpleRNNModel
 from models.varma import VARMABaseline
 from src.models.graph_rnn import GraphRNNModel
 from src.models.no_goals import NoGoalsModel
-from models.no_goals import NoGoalsModel
+from src.models.product_graphs import ProductGraphsModel
 
 
 @dataclass
@@ -347,6 +348,150 @@ def forward_pass_no_goals_baseline(
     return out, labels_y, labels_home_goals, labels_away_goals
 
 
+def build_product_graph(subseq: list[Data]) -> Data:
+    # combines into one graph, not a real batch
+    temporal_graph = Batch.from_data_list(subseq)
+
+    spatial_edges = temporal_graph.edge_index
+    spatial_edge_attrs = temporal_graph.edge_attr
+    num_nodes = subseq[0].num_nodes
+
+    # extract inter-timestamp edges
+    cum_nodes_offset = 0
+    inter_timestamp_edges = []
+    inter_timestamp_attrs = []
+
+    for t in range(len(subseq) - 1):
+        assert num_nodes == subseq[t + 1].num_nodes
+
+        src_nodes = torch.arange(
+            cum_nodes_offset,
+            cum_nodes_offset + num_nodes,
+            dtype=torch.long
+        )
+        dst_nodes = torch.arange(
+            cum_nodes_offset + num_nodes,
+            cum_nodes_offset + 2 * num_nodes,
+            dtype=torch.long
+        )
+
+        inter_timestamp_edges.append(torch.stack([src_nodes, dst_nodes]))
+
+        # Set inter-timestamp edge weights as the sum of spatial edge weights at time t divided by the number of nodes
+        sum_of_weights = subseq[t].edge_attr.sum()
+        new_attr_value = sum_of_weights / num_nodes if num_nodes > 0 else 0.0
+
+        new_temporal_attrs = torch.full(
+            size=(num_nodes,),
+            fill_value=new_attr_value.item(),
+            dtype=spatial_edge_attrs.dtype,
+            device=spatial_edge_attrs.device
+        )
+        inter_timestamp_attrs.append(new_temporal_attrs)
+
+        cum_nodes_offset += num_nodes
+
+    # combine spatial and inter-timestamp edges
+    if inter_timestamp_edges:
+        all_temporal_edges = torch.cat(inter_timestamp_edges, dim=1)
+        all_temporal_attrs = torch.cat(inter_timestamp_attrs, dim=0)
+
+        temporal_graph.edge_index = torch.cat(
+            [spatial_edges, all_temporal_edges],
+            dim=1
+        )
+        temporal_graph.edge_attr = torch.cat(
+            [spatial_edge_attrs, all_temporal_attrs],
+            dim=0
+        )
+
+    assert temporal_graph.edge_index.shape[1] == temporal_graph.edge_attr.shape[0]
+
+    return temporal_graph
+
+
+def forward_pass_product_graphs(
+    entry: TemporalSequence, model: ProductGraphsModel, device, percentage_of_match=0.8
+):
+    sequence = entry.hetero_data_sequence
+    labels_y = entry.y.to(device).argmax(dim=0).unsqueeze(0)
+    labels_home_goals = entry.final_home_goals.to(device).unsqueeze(0)
+    labels_away_goals = entry.final_away_goals.to(device).unsqueeze(0)
+
+    window_size = max(1, int(percentage_of_match * len(sequence)))
+
+    labels_y = labels_y.repeat(1, window_size).reshape(-1)
+    labels_home_goals = labels_home_goals.repeat(1, window_size).reshape(-1)
+    labels_away_goals = labels_away_goals.repeat(1, window_size).reshape(-1)
+
+    home_graphs_list: list[Data] = []
+    away_graphs_list: list[Data] = []
+    home_features_list: list[torch.Tensor] = []
+    away_features_list: list[torch.Tensor] = []
+
+    num_home_nodes = sequence[0]['home'].num_nodes
+    num_away_nodes = sequence[0]['away'].num_nodes
+
+    for t in range(window_size):
+        subseq = sequence[:t + 1]
+
+        # combine into two temporal graphs
+        subseq_homo_graphs_home: list[Data] = []
+        subseq_homo_graphs_away: list[Data] = []
+        for data in subseq:
+            data_home = Data(
+                x=data['home'].x,
+                edge_index=data["home", "passes_to", "home"].edge_index,
+                edge_attr=data["home", "passes_to", "home"].edge_weight
+            )
+            subseq_homo_graphs_home.append(data_home)
+
+            data_away = Data(
+                x=data['away'].x,
+                edge_index=data["away", "passes_to", "away"].edge_index,
+                edge_attr=data["away", "passes_to", "away"].edge_weight
+            )
+            subseq_homo_graphs_away.append(data_away)
+
+        home_graph = build_product_graph(subseq_homo_graphs_home).to(device)
+        home_graphs_list.append(home_graph)
+
+        away_graph = build_product_graph(subseq_homo_graphs_away).to(device)
+        away_graphs_list.append(away_graph)
+
+        # extract team global features
+        last_window = subseq[-1]
+        current_home_goals = last_window.current_home_goals
+        current_away_goals = last_window.current_away_goals
+
+        home_features = torch.tensor([
+            last_window.end_minute / 90.,
+            current_home_goals,
+            current_away_goals,
+            current_home_goals - current_away_goals,
+            current_home_goals + current_away_goals,
+        ],
+            device=device
+        )
+        home_features_list.append(home_features)
+
+        away_features = torch.tensor([
+            last_window.end_minute / 90.,
+            current_away_goals,
+            current_home_goals,
+            current_away_goals - current_home_goals,
+            current_home_goals + current_away_goals,
+        ],
+            device=device
+        )
+        away_features_list.append(away_features)
+
+    out = model(home_graphs_list, away_graphs_list, home_features_list, away_features_list,
+                num_home_nodes, num_away_nodes)
+
+    return out, labels_y, labels_home_goals, labels_away_goals
+
+
 # Define hyperparameters
 HYPERPARAMETERS = Hyperparameters(
     num_epochs=50,
@@ -486,6 +631,27 @@ EXPERIMENTS = {
             goal_information=HYPERPARAMETERS.goal_information
         ),
         forward_pass=forward_pass_graph_rnn,
+        criterion=build_criterion(
+            goal_information=HYPERPARAMETERS.goal_information,
+            alpha=HYPERPARAMETERS.alpha,
+            beta=HYPERPARAMETERS.beta,
+        ),
+        only_cpu=True,
+    ),
+    "product_graphs": ExperimentConfig(
+        name="product_graphs",
+        dataset_factory=lambda: TemporalAllPlayersSoccerDataset(
+            root="data",
+            starting_year=HYPERPARAMETERS.starting_year,
+            ending_year=HYPERPARAMETERS.ending_year,
+            time_interval=HYPERPARAMETERS.time_interval,
+        ),
+        model=ProductGraphsModel(
+            hidden_size=32,
+            num_layers=16,
+            goal_information=HYPERPARAMETERS.goal_information
+        ),
+        forward_pass=forward_pass_product_graphs,
         criterion=build_criterion(
             goal_information=HYPERPARAMETERS.goal_information,
             alpha=HYPERPARAMETERS.alpha,
