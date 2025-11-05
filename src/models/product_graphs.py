@@ -26,7 +26,8 @@ class ProductGraphsModel(nn.Module):
             self.goal_away_predictor = GoalPredictor(grnn_output_size, hidden_size, 1)
 
     def forward(self, home_graphs_list: list[Data], away_graphs_list: list[Data],
-                home_features_list: list[torch.Tensor], away_features_list: list[torch.Tensor]):
+                home_features_list: list[torch.Tensor], away_features_list: list[torch.Tensor],
+                num_home_nodes: int, num_away_nodes: int):
 
         output_logits = []
         home_goals_pred = []
@@ -36,10 +37,10 @@ class ProductGraphsModel(nn.Module):
                                                                         home_features_list, away_features_list):
 
             y_home = self.forward_input_graph(home_graph)
-            y_home_pooled = y_home.mean(dim=0)
+            y_home_pooled = y_home[:num_home_nodes].mean(dim=0)
 
             y_away = self.forward_input_graph(away_graph)
-            y_away_pooled = y_away.mean(dim=0)
+            y_away_pooled = y_away[:num_away_nodes].mean(dim=0)
 
             combined_features = torch.cat([y_home_pooled, home_features, y_away_pooled, away_features])
 

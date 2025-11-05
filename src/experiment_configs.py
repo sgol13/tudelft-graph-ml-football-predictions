@@ -429,6 +429,9 @@ def forward_pass_product_graphs(
     home_features_list: list[torch.Tensor] = []
     away_features_list: list[torch.Tensor] = []
 
+    num_home_nodes = sequence[0]['home'].num_nodes
+    num_away_nodes = sequence[0]['away'].num_nodes
+
     for t in range(window_size):
         subseq = sequence[:t + 1]
 
@@ -483,7 +486,8 @@ def forward_pass_product_graphs(
         )
         away_features_list.append(away_features)
 
-    out = model(home_graphs_list, away_graphs_list, home_features_list, away_features_list)
+    out = model(home_graphs_list, away_graphs_list, home_features_list, away_features_list,
+                num_home_nodes, num_away_nodes)
 
     return out, labels_y, labels_home_goals, labels_away_goals
 
@@ -643,7 +647,7 @@ EXPERIMENTS = {
             time_interval=HYPERPARAMETERS.time_interval,
         ),
         model=ProductGraphsModel(
-            hidden_size=64,
+            hidden_size=32,
             num_layers=16,
             goal_information=HYPERPARAMETERS.goal_information
         ),
