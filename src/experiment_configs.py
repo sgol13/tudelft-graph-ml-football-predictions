@@ -353,11 +353,13 @@ def build_product_graph(subseq: list[Data]) -> Data:
     temporal_graph = Batch.from_data_list(subseq)
 
     spatial_edges = temporal_graph.edge_index
+    spatial_edge_attrs = temporal_graph.edge_attr
     num_nodes = subseq[0].num_nodes
 
     # extract inter-timestamp edges
     cum_nodes_offset = 0
     inter_timestamp_edges = []
+    inter_timestamp_attrs = []
 
     for t in range(len(subseq) - 1):
         assert num_nodes == subseq[t + 1].num_nodes
@@ -374,16 +376,36 @@ def build_product_graph(subseq: list[Data]) -> Data:
         )
 
         inter_timestamp_edges.append(torch.stack([src_nodes, dst_nodes]))
+
+        # Set inter-timestamp edge weights as the sum of spatial edge weights at time t divided by the number of nodes
+        sum_of_weights = subseq[t].edge_attr.sum()
+        new_attr_value = sum_of_weights / num_nodes if num_nodes > 0 else 0.0
+
+        new_temporal_attrs = torch.full(
+            size=(num_nodes,),
+            fill_value=new_attr_value.item(),
+            dtype=spatial_edge_attrs.dtype,
+            device=spatial_edge_attrs.device
+        )
+        inter_timestamp_attrs.append(new_temporal_attrs)
+
         cum_nodes_offset += num_nodes
 
     # combine spatial and inter-timestamp edges
     if inter_timestamp_edges:
         all_temporal_edges = torch.cat(inter_timestamp_edges, dim=1)
+        all_temporal_attrs = torch.cat(inter_timestamp_attrs, dim=0)
 
         temporal_graph.edge_index = torch.cat(
             [spatial_edges, all_temporal_edges],
             dim=1
         )
+        temporal_graph.edge_attr = torch.cat(
+            [spatial_edge_attrs, all_temporal_attrs],
+            dim=0
+        )
+
+    assert temporal_graph.edge_index.shape[1] == temporal_graph.edge_attr.shape[0]
 
     return temporal_graph
 
@@ -461,7 +483,7 @@ def forward_pass_product_graphs(
         )
         away_features_list.append(away_features)
 
-    out = model(home_graphs_list, away_graphs_list, home_features_list, away_features_list, window_size=window_size)
+    out = model(home_graphs_list, away_graphs_list, home_features_list, away_features_list)
 
     return out, labels_y, labels_home_goals, labels_away_goals
 
@@ -620,7 +642,11 @@ EXPERIMENTS = {
             ending_year=HYPERPARAMETERS.ending_year,
             time_interval=HYPERPARAMETERS.time_interval,
         ),
-        model=ProductGraphsModel(),
+        model=ProductGraphsModel(
+            hidden_size=64,
+            num_layers=16,
+            goal_information=HYPERPARAMETERS.goal_information
+        ),
         forward_pass=forward_pass_product_graphs,
         criterion=build_criterion(
             goal_information=HYPERPARAMETERS.goal_information,
@@ -628,6 +654,5 @@ EXPERIMENTS = {
             beta=HYPERPARAMETERS.beta,
         ),
         only_cpu=True,
-        trainable=False,
     )
 }
