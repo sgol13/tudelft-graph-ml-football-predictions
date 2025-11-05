@@ -23,18 +23,18 @@ class TemporalSequence:
 
 
 def count_passes(
-    team_events: pd.DataFrame,
+    team_events: pd.DataFrame, players: set[str] | None = None
 ) -> tuple[Counter[tuple[int, int]], dict[str, tuple[float, float, float]], list[str]]:
     """Count successful passes within a team over given events."""
     if team_events.empty:
-        return Counter(), {}, []
+        return Counter(), {}, players if players is not None else []
 
     pass_events = team_events[
         (team_events["type"] == "Pass") & (team_events["outcome_type"] == "Successful")
-    ]
+        ]
     assert type(pass_events) is pd.DataFrame
 
-    passing_players = set()
+    passing_players = players if players else set()
     rows = pass_events[["player", "x", "y", "end_x", "end_y"]].to_numpy()
 
     for player, x, y, end_x, end_y in rows:
@@ -42,7 +42,7 @@ def count_passes(
             passing_players.add(str(player))
 
     if not passing_players:
-        return Counter(), {}, []
+        return Counter(), {}, players if players is not None else []
 
     team_players = sorted(list(passing_players))
     player_to_idx = {p: i for i, p in enumerate(team_players)}
@@ -132,12 +132,12 @@ def count_goals(
     # Count home team goals
     home_goals = events_up_to_minute[
         (events_up_to_minute["team"] == home_team) & (events_up_to_minute["is_goal"])
-    ].shape[0]
+        ].shape[0]
 
     # Count away team goals
     away_goals = events_up_to_minute[
         (events_up_to_minute["team"] == away_team) & (events_up_to_minute["is_goal"])
-    ].shape[0]
+        ].shape[0]
 
     return home_goals, away_goals
 
@@ -213,7 +213,7 @@ def build_team_graphs_with_goals(
         (events["minute"].notnull())
         & (events["minute"] >= 0)
         & (events["minute"] < 180)
-    ]
+        ]
     if events.empty:
         raise Exception(f"No valid events for {home_team} vs {away_team}")
 
@@ -238,7 +238,7 @@ def build_team_graphs_with_goals(
             (events["minute"] >= start_minute)
             & (events["minute"] < end_minute)
             & (~events["type"].isin(["Start", "End", "FormationSet"]))
-        ]
+            ]
 
         # --- HOME TEAM ---
         home_events = events_in_interval[events_in_interval["team"] == home_team]
@@ -345,7 +345,7 @@ def build_team_graphs_with_goals(
 
 
 def build_team_graphs_progressive(
-    events, home_team: str, away_team: str, time_interval=5
+    events, home_team: str, away_team: str, time_interval: int = 5, all_players: bool = False
 ) -> TemporalSequence:
     """Build paired graphs with both home and away teams for each time interval."""
     if events.empty or "minute" not in events.columns:
@@ -357,7 +357,7 @@ def build_team_graphs_progressive(
         (events["minute"].notnull())
         & (events["minute"] >= 0)
         & (events["minute"] < 180)
-    ]
+        ]
     if events.empty:
         raise Exception(f"No valid events for {home_team} vs {away_team}")
 
@@ -370,6 +370,15 @@ def build_team_graphs_progressive(
 
     sequences = []
 
+    if all_players:
+        # Get all players from the entire match
+        all_home_players = set(events[events["team"] == home_team]["player"].dropna().unique().astype(str))
+        all_away_players = set(events[events["team"] == away_team]["player"].dropna().unique().astype(str))
+
+    else:
+        all_home_players = None
+        all_away_players = None
+
     # Iterate over time intervals
     for start_minute in range(0, int(max_minute), time_interval):
         end_minute = min(start_minute + time_interval, int(max_minute) + 1)
@@ -377,7 +386,7 @@ def build_team_graphs_progressive(
             (events["minute"] >= start_minute)
             & (events["minute"] < end_minute)
             & (~events["type"].isin(["Start", "End", "FormationSet"]))
-        ]
+            ]
 
         current_home_goals, current_away_goals = count_goals(
             events, end_minute, home_team, away_team
@@ -385,12 +394,12 @@ def build_team_graphs_progressive(
 
         # Build home graph
         home_events = events_in_interval[events_in_interval["team"] == home_team]
-        home_pass_counts, home_positions, home_players = count_passes(home_events)
+        home_pass_counts, home_positions, home_players = count_passes(home_events, all_home_players)
         home_graph = build_graph(home_pass_counts, home_positions, home_players)
 
         # Build away graph
         away_events = events_in_interval[events_in_interval["team"] == away_team]
-        away_pass_counts, away_positions, away_players = count_passes(away_events)
+        away_pass_counts, away_positions, away_players = count_passes(away_events, all_away_players)
         away_graph = build_graph(away_pass_counts, away_positions, away_players)
 
         # Build HeteroData
@@ -430,18 +439,18 @@ def build_team_graphs_progressive(
 
     return sequence
 
+
 def sanity_check_events(events: pd.DataFrame, match_id: str):
     try:
         # Defensive copy
         events = events.copy()
-
 
         # Check for missing or weird values
         bad_minutes = events[
             (events["minute"].isna())
             | (events["minute"] < 0)
             | (events["minute"] > 180)
-        ]
+            ]
         if not bad_minutes.empty:
             print(f"⚠️  Weird minutes in match {match_id}:")
             print(bad_minutes[["minute", "type", "team", "player"]].head(10))
@@ -466,7 +475,6 @@ def sanity_check_positions(events: pd.DataFrame, match_id: str):
                 print(invalid[[col, "minute", "type", "player"]].head(5))
     except:
         print("Problem intransically in the data")
-
 
 
 class SoccerDataset(Dataset):
@@ -580,7 +588,7 @@ class TemporalSoccerDataset(SoccerDataset):
         self, events: pd.DataFrame, home_team: str, away_team: str
     ) -> TemporalSequence:
         return build_team_graphs_progressive(
-            events, home_team, away_team, self.time_interval
+            events, home_team, away_team, self.time_interval, all_players=False
         )
 
     def process(self):
@@ -604,7 +612,8 @@ class TemporalSoccerDataset(SoccerDataset):
                 # Get entire temporal sequence for this match
                 try:
                     sequence = self._process_match(events, home_team, away_team)
-                except Exception:
+                except Exception as e:
+                    print(f'⚠️  Skipping match {match_id} due to processing error: {e}')
                     continue
 
                 sequence.season = season_name
@@ -622,6 +631,26 @@ class TemporalSoccerDataset(SoccerDataset):
     def get(self, idx) -> TemporalSequence:
         file = Path(self.processed_dir) / f"sequence_{idx}.pt"
         return torch.load(file, weights_only=False)
+
+
+class TemporalAllPlayersSoccerDataset(TemporalSoccerDataset):
+    """
+    Creates a temporal dataset where each graph in the sequence contains nodes for ALL players who participated
+    in the match, even if they were not active in that specific time window.
+    """
+
+    @property
+    def processed_dir(self):
+        dir_name = f"processed_temporal_all_players_{self.starting_year}-{self.ending_year}-{self.time_interval}"
+        return Path(self.root).joinpath(dir_name).as_posix()
+
+    def _process_match(
+        self, events: pd.DataFrame, home_team: str, away_team: str
+    ) -> TemporalSequence:
+        """Overrides base method to use the 'all_players' graph builder."""
+        return build_team_graphs_progressive(
+            events, home_team, away_team, self.time_interval, all_players=True
+        )
 
 
 class SequentialSoccerDataset(SoccerDataset):

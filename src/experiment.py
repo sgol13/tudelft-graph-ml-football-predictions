@@ -122,7 +122,16 @@ def main():
     hyp = HYPERPARAMETERS
     print(f"Running experiment: {cfg.name}")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if cfg.only_cpu:
+        device = torch.device("cpu")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif getattr(torch.backends, "mps",
+               None) is not None and torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
+
     print(f"Using device: {device}")
 
     # Dataset
@@ -161,7 +170,7 @@ def main():
     else:
         load_final_model(model, device, run_dir)
 
-    num_epochs = hyp.num_epochs
+    num_epochs = hyp.num_epochs if cfg.trainable else 0
     early_stopping_counter = 0
 
     # === TRAINING LOOP ===================================================
