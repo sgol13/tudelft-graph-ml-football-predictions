@@ -252,6 +252,9 @@ def main():
         "RNN": f"{Path.cwd().as_posix()}/runs/2020_2024/rnn/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
         "GAT": f"{Path.cwd().as_posix()}/runs/2020_2024/large/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
         "Disjoint": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+        "Graph-RNN": f"{Path.cwd().as_posix()}/runs/2020_2024/grnn/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+        "Product Graphs": f"{Path.cwd().as_posix()}/runs/2020_2024/product_graphs/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+        "No Goals": f"{Path.cwd().as_posix()}/runs/2020_2024/no_goals/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
     }
     compare_models(MODELS, "plots/comparison_all_models_ce_5min")
 
