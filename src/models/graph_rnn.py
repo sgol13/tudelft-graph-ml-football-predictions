@@ -3,7 +3,7 @@ import torch.nn as nn
 from torch_geometric.data import Data
 from torch_geometric.nn import GCN
 
-from src.models.gat import GoalPredictor
+from models.gat import GoalPredictor
 
 
 class GraphRNNModel(nn.Module):
