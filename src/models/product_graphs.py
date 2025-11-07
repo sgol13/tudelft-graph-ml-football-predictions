@@ -3,7 +3,7 @@ import torch
 from torch_geometric.data import Data
 from torch_geometric.nn import GCNConv
 
-from src.models.gat import GoalPredictor
+from models.gat import GoalPredictor
 
 
 class ProductGraphsModel(nn.Module):

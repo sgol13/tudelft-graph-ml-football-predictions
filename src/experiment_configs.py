@@ -18,9 +18,9 @@ from models.disjoint import DisjointModel
 from models.gat import SpatialModel
 from models.rnn import SimpleRNNModel
 from models.varma import VARMABaseline
-from src.models.graph_rnn import GraphRNNModel
-from src.models.no_goals import NoGoalsModel
-from src.models.product_graphs import ProductGraphsModel
+from models.graph_rnn import GraphRNNModel
+from models.no_goals import NoGoalsModel
+from models.product_graphs import ProductGraphsModel
 
 
 @dataclass
@@ -77,27 +77,8 @@ def forward_pass_rnn(entry: TemporalSequence, model, device, percentage_of_match
     for i in range(stop):
         data = sequence[i]
 
-        # Extract features
-        home_nodes = data["home"].x.size(0)
-        away_nodes = data["away"].x.size(0)
-        home_unique_passes = data["home", "passes_to", "home"].edge_index.size(1)
-        away_unique_passes = data["away", "passes_to", "away"].edge_index.size(1)
-        home_total_passes = data["home", "passes_to", "home"].edge_weight.sum().item()
-        away_total_passes = data["away", "passes_to", "away"].edge_weight.sum().item()
-
-        features = torch.tensor(
-            [
-                home_nodes,
-                away_nodes,
-                home_unique_passes,
-                away_unique_passes,
-                home_total_passes,
-                away_total_passes,
-            ],
-            dtype=torch.float,
-            device=device,
-        )
-        match_features.append(features)
+        home_features, away_features = extract_global_feature_from_match(data, device)
+        match_features.append(torch.cat([home_features, away_features], dim=0))
 
     # Stack features for this match: (1, seq_len, feature_dim)
     match_features_tensor = torch.stack(match_features).unsqueeze(0)
@@ -547,7 +528,7 @@ EXPERIMENTS = {
             time_interval=HYPERPARAMETERS.time_interval,
         ),
         model=SimpleRNNModel(
-            input_size=6,
+            input_size=12,
             hidden_size=64,
             num_layers=1,
             output_size=3,
@@ -569,7 +550,7 @@ EXPERIMENTS = {
             time_interval=HYPERPARAMETERS.time_interval,
         ),
         model=VARMABaseline(
-            input_size=6,
+            input_size=12,
             hidden_size=64,
             p=2,
             q=1,
