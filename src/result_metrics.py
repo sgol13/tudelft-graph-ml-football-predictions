@@ -254,6 +254,7 @@ def main():
         "Disjoint": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
         "Graph-RNN": f"{Path.cwd().as_posix()}/runs/2020_2024/grnn/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
         "Product Graphs": f"{Path.cwd().as_posix()}/runs/2020_2024/product_graphs/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+        "Moving Product Graphs 2": f"{Path.cwd().as_posix()}/runs/2020_2024/moving_product_graphs/graphs_2/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
         "No Goals": f"{Path.cwd().as_posix()}/runs/2020_2024/no_goals/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
     }
     compare_models(MODELS, "plots/comparison_all_models_ce_5min")
@@ -265,12 +266,12 @@ def main():
     }
     compare_models(MODELS_DISJOINT, "plots/loss")
 
-    MODELS_INTERVAL = {
+    DISJOINT_INTERVAL = {
         "5": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
         "9": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval9/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
         "15": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval15/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
     }
-    compare_models(MODELS_INTERVAL, "plots/interval")
+    compare_models(DISJOINT_INTERVAL, "plots/disjoint-interval")
 
     MOVING_PRODUCT_GRAPHS = {
         '2': f"{Path.cwd().as_posix()}/runs/2020_2024/moving_product_graphs/graphs_2/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
