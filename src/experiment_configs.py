@@ -392,7 +392,7 @@ def build_product_graph(subseq: list[Data]) -> Data:
 
 
 def forward_pass_product_graphs(
-    entry: TemporalSequence, model: ProductGraphsModel, device, percentage_of_match=1.0, product_length: int = 5
+    entry: TemporalSequence, model: ProductGraphsModel, device, percentage_of_match=1.0, product_length: int = None
 ):
     sequence = entry.hetero_data_sequence
     labels_y = entry.y.to(device).argmax(dim=0).unsqueeze(0)
@@ -607,8 +607,8 @@ EXPERIMENTS = {
             time_interval=HYPERPARAMETERS.time_interval,
         ),
         model=ProductGraphsModel(
-            hidden_size=32,
-            num_layers=16,
+            hidden_size=16,
+            num_layers=8,
             only_last=True,
             goal_information=HYPERPARAMETERS.goal_information
         ),
