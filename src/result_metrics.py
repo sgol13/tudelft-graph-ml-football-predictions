@@ -272,6 +272,14 @@ def main():
     }
     compare_models(MODELS_INTERVAL, "plots/interval")
 
+    MOVING_PRODUCT_GRAPHS = {
+        '2': f"{Path.cwd().as_posix()}/runs/2020_2024/moving_product_graphs/graphs_2/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+        '3': f"{Path.cwd().as_posix()}/runs/2020_2024/moving_product_graphs/graphs_3/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+        '4': f"{Path.cwd().as_posix()}/runs/2020_2024/moving_product_graphs/graphs_4/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+        '5': f"{Path.cwd().as_posix()}/runs/2020_2024/moving_product_graphs/graphs_5/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+    }
+    compare_models(MOVING_PRODUCT_GRAPHS, "plots/moving_product_graphs")
+
 
 if __name__ == "__main__":
     main()
