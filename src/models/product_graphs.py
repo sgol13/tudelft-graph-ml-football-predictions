@@ -8,10 +8,11 @@ from models.gat import GoalPredictor
 
 class ProductGraphsModel(nn.Module):
     def __init__(self, hidden_size: int = 32, num_layers: int = 5, num_classes: int = 3, num_player_features: int = 4,
-                 num_global_features: int = 5, goal_information: bool = False):
+                 num_global_features: int = 6, only_last: bool = False, goal_information: bool = False):
         super(ProductGraphsModel, self).__init__()
 
         self.goal_information: bool = goal_information
+        self.only_last: bool = only_last
 
         self.convs = nn.ModuleList()
         self.convs.append(GCNConv(num_player_features, hidden_size))
@@ -37,10 +38,14 @@ class ProductGraphsModel(nn.Module):
                                                                         home_features_list, away_features_list):
 
             y_home = self.forward_input_graph(home_graph)
-            y_home_pooled = y_home[:num_home_nodes].mean(dim=0)
-
             y_away = self.forward_input_graph(away_graph)
-            y_away_pooled = y_away[:num_away_nodes].mean(dim=0)
+
+            if self.only_last:
+                y_home_pooled = y_home[:num_home_nodes].mean(dim=0)
+                y_away_pooled = y_away[:num_away_nodes].mean(dim=0)
+            else:
+                y_home_pooled = y_home.mean(dim=0)
+                y_away_pooled = y_away.mean(dim=0)
 
             combined_features = torch.cat([y_home_pooled, home_features, y_away_pooled, away_features])
 
