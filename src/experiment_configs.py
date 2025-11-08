@@ -258,7 +258,7 @@ def normalize_edge_weights(edge_weights: torch.Tensor) -> torch.Tensor:
 
 
 def forward_pass_graph_rnn(
-    entry: TemporalSequence, model: GraphRNNModel, device, percentage_of_match=0.8
+    entry: TemporalSequence, model: GraphRNNModel, device, percentage_of_match=1.0
 ):
     sequence = entry.hetero_data_sequence
     labels_y = entry.y.to(device).argmax(dim=0).unsqueeze(0)
@@ -311,7 +311,7 @@ def forward_pass_graph_rnn(
 
 
 def forward_pass_no_goals_baseline(
-    entry: TemporalSequence, model: NoGoalsModel, device, percentage_of_match=0.8
+    entry: TemporalSequence, model: NoGoalsModel, device, percentage_of_match=1.0
 ):
     sequence = entry.hetero_data_sequence
     labels_y = entry.y.to(device).argmax(dim=0).unsqueeze(0)
@@ -392,7 +392,7 @@ def build_product_graph(subseq: list[Data]) -> Data:
 
 
 def forward_pass_product_graphs(
-    entry: TemporalSequence, model: ProductGraphsModel, device, percentage_of_match=0.8
+    entry: TemporalSequence, model: ProductGraphsModel, device, percentage_of_match=1.0
 ):
     sequence = entry.hetero_data_sequence
     labels_y = entry.y.to(device).argmax(dim=0).unsqueeze(0)
