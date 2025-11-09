@@ -164,28 +164,19 @@ def evaluate_plus(
     with open(save_path, "w") as f:
         json.dump(results, f, indent=4)
 
-
-def compare_models(metrics_paths, save_dir=None):
+def compare_models(metrics_paths, save_dir=None, font_size=14, legend_font_size=14):
     """
-    Compare evaluation_plus results across multiple models.
+    Compare evaluation_plus results across multiple models with two subplots and shared legend.
 
     Args:
         metrics_paths (dict): {model_name: path_to_json}
-        time_interval (int): the length of every window
-        save_dir (str, optional): where to save the comparison plots. If None, no saving.
-
-    Each JSON is expected to contain:
-        {
-            "loss": float,
-            "accuracy": float,
-            "rps": float,
-            "per_position": [
-                {"pos": int, "acc": float, "rps": float}, ...
-            ],
-        }
+        save_dir (str, optional): where to save the comparison plots.
+        font_size (int): base font size for labels and ticks.
+        legend_font_size (int): font size for the shared legend.
     """
     data = {}
     time_interval = {}
+
     # === Load JSON files ===
     for name, path in metrics_paths.items():
         if not os.path.exists(path):
@@ -193,7 +184,7 @@ def compare_models(metrics_paths, save_dir=None):
             continue
         with open(path, "r") as f:
             data[name] = json.load(f)
-            time_interval[name] = extract_time_interval(path)
+            time_interval[name] = extract_time_interval(path)  # or replace with fixed number
 
     if not data:
         print("❌ No valid model results found.")
@@ -205,46 +196,43 @@ def compare_models(metrics_paths, save_dir=None):
         table.append([name, res["loss"], res["accuracy"], res["rps"]])
 
     print("\n📊 Model Comparison Summary:")
-    print(
-        tabulate(
-            table, headers=["Model", "Loss", "Accuracy (%)", "RPS"], floatfmt=".4f"
-        )
-    )
+    print(tabulate(table, headers=["Model", "Loss", "Accuracy (%)", "RPS"], floatfmt=".4f"))
 
-    # === Plot accuracy and RPS per position ===
-    plt.figure(figsize=(10, 4))
+    # === Create figure with two subplots ===
+    fig, axes = plt.subplots(1, 2, figsize=(12, 3), sharex=True)
+    ax_acc, ax_rps = axes
+
     for name, res in data.items():
-        xs = [(p["pos"] + 1) * time_interval[name] for p in res["per_position"] if (p["pos"] +1) * time_interval[name] <= 90]
-        accs = [p["acc"] for p in res["per_position"] if (p["pos"] +1) * time_interval[name] <= 90]
-        plt.plot(xs, accs, marker="o", label=name)
-    plt.title("Accuracy per Minute")
-    plt.xlabel("Time")
-    plt.ylabel("Accuracy (%)")
-    plt.legend()
-    plt.grid(True)
+        xs = [(p["pos"] + 1) * time_interval[name] for p in res["per_position"] if (p["pos"] + 1) * time_interval[name] <= 90]
+        accs = [p["acc"] for p in res["per_position"] if (p["pos"] + 1) * time_interval[name] <= 90]
+        rpss = [p["rps"] for p in res["per_position"] if (p["pos"] + 1) * time_interval[name] <= 90]
+
+        ax_acc.plot(xs, accs, marker="o", label=name)
+        ax_rps.plot(xs, rpss, marker="o", label=name)
+
+    # === Customize subplots ===
+    for ax, title, ylab in zip(axes, ["Accuracy per Minute", "RPS per Minute"], ["Accuracy (%)", "RPS"]):
+        # ax.set_title(title, fontsize=font_size + 2)
+        ax.set_xlabel("Time (min)", fontsize=font_size)
+        ax.set_ylabel(ylab, fontsize=font_size)
+        ax.tick_params(axis="both", which="major", labelsize=font_size - 1)
+        ax.grid(True)
+
+    # === Shared legend below both plots ===
+    handles, labels = ax_acc.get_legend_handles_labels()
+    fig.legend(handles, labels, loc="lower center", ncol=len(data),
+               bbox_to_anchor=(0.5, -0.05), fontsize=legend_font_size)
+
+    plt.tight_layout(rect=[0, 0.05, 1, 1])
+
+    # === Save figure ===
     if save_dir:
         os.makedirs(save_dir, exist_ok=True)
-        acc_path = os.path.join(save_dir, "compare_accuracy.png")
-        plt.savefig(acc_path, bbox_inches="tight")
-        print(f"📈 Saved accuracy plot to: {acc_path}")
-    plt.show()
+        save_path = os.path.join(save_dir, "compare_models_combined.png")
+        fig.savefig(save_path, bbox_inches="tight")
+        print(f"📊 Saved combined comparison plot to: {save_path}")
 
-    plt.figure(figsize=(10, 4))
-    for name, res in data.items():
-        xs = [(p["pos"] + 1) * time_interval[name] for p in res["per_position"] if (p["pos"] +1) * time_interval[name] <= 90]
-        rpss = [p["rps"]  for p in res["per_position"] if (p["pos"] +1) * time_interval[name] <= 90]
-        plt.plot(xs, rpss, marker="o", label=name)
-    plt.title("RPS per Minute")
-    plt.xlabel("Time")
-    plt.ylabel("RPS")
-    plt.legend()
-    plt.grid(True)
-    if save_dir:
-        rps_path = os.path.join(save_dir, "compare_rps.png")
-        plt.savefig(rps_path, bbox_inches="tight")
-        print(f"📉 Saved RPS plot to: {rps_path}")
     plt.show()
-
 
 def main():
     MODELS = {
@@ -253,11 +241,11 @@ def main():
         "GAT": f"{Path.cwd().as_posix()}/runs/2020_2024/large/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
         "Disjoint": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
         "Graph-RNN": f"{Path.cwd().as_posix()}/runs/2020_2024/grnn/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
-        "Product Graphs": f"{Path.cwd().as_posix()}/runs/2020_2024/product_graphs/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
-        "Moving Product Graphs 2": f"{Path.cwd().as_posix()}/runs/2020_2024/moving_product_graphs/graphs_2/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
-        "No Goals": f"{Path.cwd().as_posix()}/runs/2020_2024/no_goals/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+        "Product Graphs": f"{Path.cwd().as_posix()}/runs/2020_2024/product_graphs/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json"
+        # "Moving Product Graphs 2": f"{Path.cwd().as_posix()}/runs/2020_2024/moving_product_graphs/graphs_2/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+        # "No Goals": f"{Path.cwd().as_posix()}/runs/2020_2024/no_goals/time_interval5/goal_False/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
     }
-    compare_models(MODELS, "plots/comparison_all_models_ce_5min")
+    compare_models(MODELS, "plots/comparison_all_models_ce_5min_def")
 
     MODELS_DISJOINT = {
         "goal_loss": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_True/lr0.0005_wr1e-05_a0.1_b1/evaluate_plus_results.json",
@@ -268,7 +256,7 @@ def main():
 
     DISJOINT_INTERVAL = {
         "5": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval5/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
-        "9": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval9/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
+        "10": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval9/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
         "15": f"{Path.cwd().as_posix()}/runs/2020_2024/disjoint/time_interval15/goal_True/lr0.0005_wr1e-05_a1.0_b0.5/evaluate_plus_results.json",
     }
     compare_models(DISJOINT_INTERVAL, "plots/disjoint-interval")
